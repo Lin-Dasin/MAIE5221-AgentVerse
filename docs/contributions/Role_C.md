@@ -1,96 +1,96 @@
-# 角色 C 工作说明：记忆、演化与实验
+# Role C Work Specification: Memory, Evolution, and Experiments
 
-**项目：** 多智能体协作系统  
-**角色分支：** `Role_C`  
-**代码边界：** `memory/`、`profiles/`  
-**报告责任：** §4 记忆机制与实验数据  
-**生效日期：** 2026-10-25
+**Project:** Multi-Agent Collaboration System  
+**Role branch:** `Role_C`  
+**Code ownership:** `memory/`, `profiles/`  
+**Report ownership:** Section 4, Memory Mechanism and Experimental Results  
+**Effective date:** 2026-10-25
 
-## 1. 角色目标
+## 1. Role Objective
 
-角色 C 负责让每个 Agent 具备独立、可追溯、可复用的任务记忆，并用可复现的实验说明记忆机制对系统完成率或执行效率带来提升。
+Role C is responsible for providing each agent with independent, traceable, reusable task memory, and for using reproducible experiments to demonstrate whether the memory mechanism improves task completion or execution efficiency.
 
-本项目中的 Evolution 是“跨任务记忆”：任务结束后记录成败原因与可复用经验；下一次处理相似任务时检索并注入相关经验。它不是模型训练、微调或向量数据库项目。
+In this project, Evolution means cross-task memory: after a task, the system records outcomes and reusable lessons; when a similar task arrives later, the agent retrieves and applies relevant lessons. It is not model training, fine-tuning, or a vector-database project.
 
-最终必须能证明两件事：
+The final system must demonstrate both of the following:
 
-1. 不同 Agent 的记忆彼此隔离，不能互相读取或污染。
-2. 在相同任务集、相同模型配置和相同验收规则下，启用记忆的运行结果优于或至少可解释地不同于关闭记忆的基线结果。
+1. Different agents have isolated memories and cannot read or contaminate one another's memory.
+2. Given the same task set, model configuration, and acceptance criteria, runs with memory enabled outperform, or at minimum differ explainably from, the baseline with memory disabled.
 
-## 2. 负责范围
+## 2. Scope of Responsibility
 
-### 2.1 必须完成
+### 2.1 Required Deliverables
 
-- 设计并实现 Agent 私有记忆的读写接口。
-- 设计反思记录的结构化格式，至少覆盖：任务摘要、成功或失败、失败类型、有效策略、无效策略、可复用建议和时间戳。
-- 为每个 Agent 提供独立的角色档案与工具白名单配置。
-- 在任务开始前，根据当前任务检索相关记忆，并生成可注入 Agent 上下文的短文本。
-- 在任务结束后，依据任务结果、Critic 验收结果和 trace 写入反思记录。
-- 编写并运行“关闭记忆 / 开启记忆”的 A/B 对照实验。
-- 撰写报告 §4，解释机制、实验设置、指标、结果、失败案例及局限性。
+- Design and implement read/write interfaces for private agent memory.
+- Define a structured reflection record covering at least: task summary, success or failure, failure category, effective strategies, ineffective strategies, reusable advice, and timestamp.
+- Provide an independent role profile and tool-allowlist configuration for each agent.
+- Before execution, retrieve task-relevant memory and produce concise text that can be injected into the agent context.
+- After execution, write a reflection record based on the task result, Critic acceptance result, and trace.
+- Design and run an A/B experiment comparing memory-disabled and memory-enabled runs.
+- Write report Section 4, explaining the mechanism, experimental setup, metrics, results, failure cases, and limitations.
 
-### 2.2 明确不负责
+### 2.2 Explicitly Out of Scope
 
-- 不负责任务图 schema、任务调度、子委派和 HITL 决策逻辑；这些由 A 负责。
-- 不负责 Docker、容器隔离、文件工具、代码执行、搜索或 git 工具；这些由 B 负责。
-- 不负责 harness 主流程、全局指标计算、消息总线、CLI 和最终图表汇总；这些由 D 负责。
-- 不引入向量数据库、外部数据库、模型微调或复杂多轮反思链，除非全组明确批准。
+- Task graph schema, task scheduling, sub-delegation, and HITL decision logic are owned by Role A.
+- Docker, container isolation, file tools, code execution, search, and git tools are owned by Role B.
+- The primary harness flow, global metric computation, message bus, CLI, and final chart consolidation are owned by Role D.
+- Do not introduce a vector database, external database, model fine-tuning, or complex multi-round reflection chains unless the team explicitly approves them.
 
-## 3. 最小可行设计
+## 3. Minimum Viable Design
 
-先完成稳定、可测的最小版本，再考虑优化。
+Build a stable, testable minimum version first; optimize only after the full loop works.
 
-### 3.1 数据存储
+### 3.1 Data Storage
 
-- 每个 Agent 一份记忆文件，例如 `memory/data/<agent_id>.jsonl`。
-- 一行对应一条 JSON 记录，便于追加、diff、筛选和回放。
-- 文件只能由该 Agent 的记忆模块读写；其他 Agent 不得直接读取。
-- 运行时生成的数据不提交到 Git，仓库只提交 schema、样例和测试夹具。
+- Each agent owns one memory file, for example `memory/data/<agent_id>.jsonl`.
+- Each line is one JSON record, allowing appending, diffing, filtering, and replay.
+- A memory file may only be read or written by its corresponding agent memory module. Other agents must not read it directly.
+- Runtime-generated data must not be committed to Git. Commit only the schema, examples, and test fixtures.
 
-建议记录格式：
+Recommended record format:
 
 ```json
 {
   "memory_id": "mem-0001",
   "agent_id": "researcher",
   "task_type": "web_research",
-  "task_summary": "收集三家竞品定价并附来源",
+  "task_summary": "Collect pricing for three competitors with sources",
   "outcome": "success",
   "failure_category": null,
-  "effective_strategy": ["先确定候选公司，再逐项核验官网页面"],
-  "avoid": ["不要引用无发布日期的聚合页面"],
-  "reusable_advice": "价格信息必须保留来源 URL 与访问日期。",
+  "effective_strategy": ["Identify candidate companies first, then verify each official source"],
+  "avoid": ["Do not cite aggregator pages without publication dates"],
+  "reusable_advice": "Pricing information must retain both the source URL and access date.",
   "evidence_task_id": "dev-03",
   "created_at": "2026-11-05T10:20:00Z"
 }
 ```
 
-### 3.2 检索策略
+### 3.2 Retrieval Strategy
 
-第一版仅使用关键词重叠和字符串相似度。记忆总量预计有限，这比引入向量库更稳定、更易复现。
+The first version should use keyword overlap and string similarity only. The expected memory volume is small, making this approach more stable and reproducible than adding a vector database.
 
-- 输入：当前 Agent ID、任务标题、任务描述和任务类型。
-- 过滤：只查询当前 Agent 的私有记忆。
-- 排序：任务类型匹配优先，其次按关键词或字符串相似度排序。
-- 输出：最多 3 条相关经验，每条限制长度，避免挤占模型上下文。
-- 无匹配时：返回空结果，系统照常执行，不能视为错误。
+- Input: current agent ID, task title, task description, and task type.
+- Filter: query only the current agent's private memory.
+- Ranking: prioritize matching task types, then rank by keyword or string similarity.
+- Output: return at most three relevant lessons, each length-limited to avoid consuming excessive model context.
+- No match: return an empty result and allow the system to run normally. This must not be treated as an error.
 
-### 3.3 反思生成策略
+### 3.3 Reflection Generation Strategy
 
-反思的输入应来自结构化运行事实，而不是要求模型自由发挥：任务描述、工具调用结果、产物路径、Critic 验收结果、失败清单和耗时。
+Reflection should be based on structured execution facts, rather than asking the model to improvise. Inputs include the task description, tool results, artifact paths, Critic acceptance result, defect list, and duration.
 
-第一版可以使用固定模板生成反思；如使用 LLM，必须将 prompt 固定并记录版本，以便实验复现。只有高价值、可复用的结论才写入长期记忆，避免把噪声和一次性上下文重复存储。
+The first version may generate reflections using a fixed template. If an LLM is used, the prompt must be fixed and versioned for experimental reproducibility. Persist only valuable, reusable conclusions to avoid storing noise and transient context.
 
-## 4. 对外接口契约
+## 4. External Interface Contract
 
-以下接口由 C 实现，具体字段以 A 定稿的 `protocol/` 模型为准。跨模块不得传裸字典。
+Role C implements the following interfaces. Exact fields follow the `protocol/` models finalized by Role A. Modules must not exchange untyped dictionaries.
 
 ```python
 def retrieve_memory(agent_id: str, task: Task) -> list[MemoryRecord]:
-    """返回该 Agent 与当前任务最相关的私有记忆。"""
+    """Return private memories most relevant to the current task."""
 
 def build_memory_context(records: list[MemoryRecord]) -> str:
-    """将检索结果压缩为可注入 Agent prompt 的上下文。"""
+    """Compress retrieved records into context that can be injected into an agent prompt."""
 
 def write_reflection(
     agent_id: str,
@@ -98,134 +98,134 @@ def write_reflection(
     result: TaskResult,
     critique: CriticResult,
 ) -> MemoryRecord:
-    """根据经过验收的执行事实生成并持久化反思。"""
+    """Generate and persist a reflection from accepted execution facts."""
 ```
 
-### 与 A 的交接
+### Handoff with Role A
 
-- A 在 Agent 主循环开始前调用 `retrieve_memory()` 与 `build_memory_context()`。
-- A 在任务完成、重试结束或 Critic 给出最终结论后，向 C 提供结构化 `TaskResult` 与 `CriticResult`。
-- C 不改调度规则；接口或字段有变化时，由 A 裁定并在 `protocol/` 中先更新模型。
+- Role A calls `retrieve_memory()` and `build_memory_context()` before the agent's main execution loop begins.
+- After a task ends, retries are exhausted, or the Critic reaches a final result, Role A supplies structured `TaskResult` and `CriticResult` objects to Role C.
+- Role C does not modify scheduling rules. Role A arbitrates interface or field changes and must update the models in `protocol/` first.
 
-### 与 D 的交接
+### Handoff with Role D
 
-- D 的 harness 负责传入实验模式：`memory_enabled=true/false`。
-- D 输出统一的任务级结果：任务状态、耗时、验收数、失败原因、token 数和 trace 路径。
-- C 依据 D 的结果分析两组数据，并向 D 提供 §4 所需指标、结论和图表数据；D 只做格式统一，不改写实验论证。
+- Role D's harness passes the experiment mode: `memory_enabled=true/false`.
+- Role D produces standardized task-level results: task status, duration, acceptance counts, failure reason, token count, and trace path.
+- Role C analyzes both groups and provides Section 4 metrics, conclusions, and chart data to Role D. Role D standardizes presentation only and must not rewrite the experimental argument.
 
-### 与 B 的交接
+### Handoff with Role B
 
-- C 的记忆文件与 profile 配置必须遵守 B 定义的路径校验和容器隔离规则。
-- C 不直接绕过工具层读取其他 Agent workspace 或其私有记忆。
+- Memory files and profile configuration must comply with Role B's path-validation and container-isolation rules.
+- Role C must not bypass the tool layer to read another agent's workspace or private memory.
 
-## 5. 周期计划与验收标准
+## 5. Timeline and Exit Criteria
 
-### W8：10/19–10/25，契约与原型
+### W8: Oct 19-25, Contract and Prototype
 
-目标：完成数据结构和最小闭环设计。
+Objective: complete the data design and minimal loop.
 
-- 与 A 确认 `Task`、`TaskResult`、`CriticResult` 的最小字段。
-- 定义 `MemoryRecord` Pydantic 模型及 JSONL 样例。
-- 定义失败分类表，例如：`tool_error`、`timeout`、`invalid_output`、`missing_input`、`hitl_blocked`、`model_reasoning_error`。
-- 使用假数据跑通“写入 → 检索 → 注入文本”的单元测试。
+- Confirm minimum `Task`, `TaskResult`, and `CriticResult` fields with Role A.
+- Define the `MemoryRecord` Pydantic model and JSONL examples.
+- Define a failure-category taxonomy, for example: `tool_error`, `timeout`, `invalid_output`, `missing_input`, `hitl_blocked`, and `model_reasoning_error`.
+- Use mock data to test the write -> retrieve -> context-injection loop.
 
-出口标准：接口签名、样例数据、测试用例和 profile 配置样例进入 `develop`。
+Exit criteria: interface signatures, sample data, tests, and profile configuration examples are merged into `develop`.
 
-### W9：10/26–11/1，记忆模块实现
+### W9: Oct 26-Nov 1, Memory Module Implementation
 
-目标：`memory/` 和 `profiles/` 可独立运行。
+Objective: `memory/` and `profiles/` run independently.
 
-- 实现 JSONL 的追加写入、读取、校验和异常处理。
-- 实现按 Agent 隔离的检索与排序。
-- 实现上下文压缩，保证空记忆或损坏记录不会终止任务。
-- 编写单元测试：隔离性、筛选、排序、长度限制和无匹配降级。
+- Implement JSONL append, read, validation, and error handling.
+- Implement agent-isolated retrieval and ranking.
+- Implement context compression so empty memory or corrupt records never terminate a task.
+- Write unit tests for isolation, filtering, ranking, length limits, and no-match fallback.
 
-出口标准：通过单元测试；可用脚本展示不同 Agent 检索到不同记忆。
+Exit criteria: unit tests pass, and a script demonstrates that different agents retrieve different memories.
 
-### W10：11/2–11/8，端到端接入
+### W10: Nov 2-8, End-to-End Integration
 
-目标：真实任务第一次运行能写记忆，后续相似任务能检索并使用。
+Objective: a real task writes memory on its first run, and a later similar task retrieves and uses it.
 
-- 与 A 接入 Agent 主循环。
-- 接收 Critic 的最终验收结果生成反思。
-- 与 D 对接 `memory_enabled` 开关和任务结果采集。
-- 准备至少 3 组可重复的相似任务，作为 A/B 实验候选。
+- Integrate with Role A's agent main loop.
+- Generate reflections from the Critic's final acceptance result.
+- Integrate Role D's `memory_enabled` switch and task-result collection.
+- Prepare at least three repeatable groups of similar tasks as A/B experiment candidates.
 
-出口标准：在 dev set 中可展示一次“首次失败或完成后写入经验，第二次任务读取经验”的完整 trace。
+Exit criteria: a dev-set trace demonstrates a full loop: a first run records experience after success or failure, and a second run reads that experience.
 
-### W11：11/9–11/15，A/B 实验
+### W11: Nov 9-15, A/B Experiment
 
-目标：取得可用于报告的第一轮数据。
+Objective: obtain the first report-ready dataset.
 
-- 固定任务集、模型、prompt 版本、token 上限、验收规则和运行环境。
-- 运行无记忆组与有记忆组，必要时重复运行降低偶然性。
-- 记录顶层目标完成率、子任务完成率、平均执行时间、失败类型和 token 消耗。
-- 区分“记忆确实帮助”与“模型随机波动或任务差异”。
+- Freeze the task set, model, prompt version, token budget, acceptance rules, and runtime environment.
+- Run memory-disabled and memory-enabled groups; repeat runs where needed to reduce randomness.
+- Record overarching-goal completion rate, subtask completion rate, average duration, failure categories, and token consumption.
+- Separate real memory benefits from model randomness or task differences.
 
-出口标准：形成原始结果文件、实验说明、至少一张对比图所需的数据，以及失败案例。
+Exit criteria: raw result files, an experiment description, data for at least one comparison chart, and failure examples are available.
 
-### W12：11/16–11/22，加固与报告定稿
+### W12: Nov 16-22, Hardening and Report Draft
 
-目标：根据 mid 结果修正机制，并冻结实验结论。
+Objective: improve the mechanism based on mid-test results and freeze experimental conclusions.
 
-- 清理低质量或重复记忆，修正检索排序问题。
-- 复跑受影响实验，确保前后结果可解释。
-- 完成报告 §4 初稿：设计动机、实现、实验设置、结果、局限性。
+- Remove low-quality or duplicate memories and correct retrieval-ranking issues.
+- Re-run affected experiments so results before and after changes remain explainable.
+- Complete the first draft of report Section 4: motivation, implementation, experimental setup, results, and limitations.
 
-出口标准：A/B 数据完整，结论可复查，§4 可直接合入总报告。
+Exit criteria: A/B data is complete, conclusions are reviewable, and Section 4 can be merged into the final report.
 
-### W13：11/23–11/29，最终支持
+### W13: Nov 23-29, Final Support
 
-目标：保障 final 与演示，并完成 §4 定稿。
+Objective: support final testing and the demo, and finalize Section 4.
 
-- 配合 final 测试定位记忆相关失败。
-- 提供演示所需的可解释记忆案例。
-- 按最终数据更新 §4，不再做高风险架构重构。
+- Help identify memory-related failures during final testing.
+- Provide explainable memory examples for the demo.
+- Update Section 4 using final data without high-risk architecture refactors.
 
-出口标准：final trace 中能说明记忆何时写入、何时检索、对任务产生何种影响。
+Exit criteria: the final trace shows when memory was written, when it was retrieved, and how it affected task execution.
 
-## 6. A/B 实验规则
+## 6. A/B Experiment Rules
 
-实验必须满足可复现和公平对照：
+The experiment must be reproducible and fair:
 
-1. 两组使用同一任务集、同一 acceptance、同一模型配置、同一工具权限和同一 token 上限。
-2. 唯一变量是是否注入历史记忆；无记忆组不读取旧记录，有记忆组只读取该 Agent 的既有记录。
-3. 记录双口径完成率、平均耗时、token 消耗和失败原因分布，不能只挑选对记忆有利的案例。
-4. 若结果没有显著提升，仍如实报告，并分析可能原因，例如检索不相关、任务缺乏重复模式或模型波动。
-5. 不宣称“记忆提升”而没有原始运行记录、固定配置和对应 trace。
+1. Both groups use the same task set, acceptance criteria, model configuration, tool permissions, and token budget.
+2. The only variable is whether historical memory is injected. The memory-disabled group does not read previous records; the memory-enabled group reads only the current agent's prior records.
+3. Record both completion-rate definitions, average duration, token consumption, and failure-reason distribution. Do not select only cases favorable to memory.
+4. If there is no meaningful improvement, report that honestly and analyze likely causes, such as irrelevant retrieval, tasks lacking recurring patterns, or model variation.
+5. Do not claim that memory improves performance without raw run records, frozen configuration, and corresponding traces.
 
-## 7. 分支与提交建议
+## 7. Branch and Commit Guidance
 
-- 长期工作分支使用 `Role_C`；临时验证可使用 `Role_C/exp-memory-ab`，合并后删除。
-- 每日推送，最长不超过两天不推送；至少每三天经 PR 合入 `develop`。
-- 合入前先将 `develop` merge 到个人分支，解决冲突后再发 PR；不使用 squash 或 rebase 合并。
-- PR 描述必须包含：修改内容、验证方法、对 A/D 接口的影响。
+- Use `Role_C` as the long-lived personal branch. Use a temporary branch such as `Role_C/exp-memory-ab` only for isolated experiments, then delete it after merging.
+- Push daily and never leave local work unpushed for more than two days. Merge to `develop` through a PR at least every three days.
+- Before opening a PR, merge `develop` into the personal branch and resolve conflicts. Do not use squash or rebase merges.
+- Every PR description must state: what changed, how it was verified, and its impact on Role A/D interfaces.
 
-建议的首批提交：
+Suggested initial commits:
 
 ```text
-docs(memory): 添加角色C记忆机制工作说明
-feat(memory): 定义MemoryRecord与JSONL存储接口
-feat(profiles): 添加agent工具白名单配置样例
-test(memory): 覆盖私有隔离与相似任务检索
-feat(memory): 接入任务反思与上下文构建
-test(memory): 添加记忆开关对照实验夹具
-docs(report): 补充记忆A/B实验设计
+docs(memory): add Role C memory mechanism work specification
+feat(memory): define MemoryRecord and JSONL storage interface
+feat(profiles): add example agent tool allowlist configuration
+test(memory): cover private isolation and similar-task retrieval
+feat(memory): integrate task reflection and context construction
+test(memory): add fixtures for memory-toggle comparison experiments
+docs(report): add memory A/B experiment design
 ```
 
-## 8. 风险与升级条件
+## 8. Risks and Escalation Conditions
 
-- A 在 W8 结束前未冻结协议：先实现不依赖具体字段的存储和检索层；协议变更必须在群内确认后再接入。
-- D 在 W10 前未提供开关或结果格式：先用独立脚本收集实验数据，但不要自行改 harness 主流程。
-- 记忆注入拉长上下文或降低结果：限制为最多 3 条、优先高相关度、允许关闭记忆降级运行。
-- 同一问题阻塞超过半天、需要改动他人目录、或接口含义不清：先在群内同步，不直接跨目录修改代码。
+- If Role A has not frozen the protocol by the end of W8: implement storage and retrieval independently of unstable fields first. Do not integrate until protocol changes are confirmed in the group.
+- If Role D has not provided the switch or result format by W10: collect experimental data with an independent script, but do not modify the primary harness flow unilaterally.
+- If memory injection expands context or harms results: limit output to three high-relevance records and allow the system to run with memory disabled.
+- If the same issue blocks work for more than half a day, requires edits outside this ownership boundary, or has an unclear interface meaning: report it to the group first; do not modify another owner's module directly.
 
-## 9. 个人完成定义
+## 9. Definition of Personal Completion
 
-角色 C 在以下全部完成时可视为交付完成：
+Role C is complete only when all of the following are true:
 
-- `memory/` 与 `profiles/` 有独立、可测试、可维护的实现。
-- 每个 Agent 的记忆可验证地独立，且不会阻塞无记忆运行。
-- 端到端 trace 能展示写入与检索发生的时间、对象和内容摘要。
-- A/B 实验有可复现配置、原始结果和诚实的结论。
-- 报告 §4 与个人 commit/PR 记录能共同证明持续、实质性的贡献。
+- `memory/` and `profiles/` contain independent, testable, maintainable implementations.
+- Every agent's memory is demonstrably independent and does not prevent memory-disabled execution.
+- An end-to-end trace shows the time, subject, and content summary of memory writes and retrievals.
+- The A/B experiment has reproducible configuration, raw results, and an honest conclusion.
+- Report Section 4, personal commits, and PR history together demonstrate sustained, substantive contribution.
