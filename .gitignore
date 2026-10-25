@@ -1,0 +1,27 @@
+# Secrets and local config
+.env
+.env.local
+
+# Runtime output
+workspaces/
+results/
+artifacts/
+traces/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
