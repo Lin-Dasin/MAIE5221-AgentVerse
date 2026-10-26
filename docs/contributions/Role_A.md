@@ -1,109 +1,110 @@
-# 个人分工与工作计划
+# Individual Responsibilities and Work Plan
 
-## 基本信息
+## Basic Information
 
-- 姓名：Wang
-- GitHub 用户名：Luhkel-04
-- 项目角色：A——任务编排与 Agent 运行时负责人，负责核心接口契约、任务调度、HITL 门和 Agent 主循环；主持前期接口对齐与首次集成，主笔架构总纲、报告 §2「路由与协作逻辑」，负责 W13 演示脚本。
-- 个人开发分支：`Role_A`。
+- Name: Wang
+- GitHub Username: Luhkel-04
+- Project Role: A — Task Orchestration and Agent Runtime Lead. Responsible for core interface contracts, task scheduling, the HITL gate, and the Agent execution loop; leads early interface alignment and the first integration; serves as the lead author of the architecture overview and report Section 2, “Routing and Collaboration Logic”; and prepares the W13 demonstration script.
+- Personal Development Branch: `Role_A`.
 
-## 负责内容
 
-- 负责的模块：`protocol/`（数据模型与接口契约）、`orchestrator/`（规划、调度、HITL 与产物交接）、`runtime/`（Agent 主循环与统一模型调用）。同时维护对应测试、接口文档和个人负责的报告章节。
-- 需要实现的功能：实现从用户目标输入，到任务分解、角色协商、依赖调度、工具调用、Critic 验收、交付物汇总及记忆回写的编排链路；具体如下。
+## Responsibilities
 
-| 功能 | A 的实现内容 | 完成时应具备的行为 |
+- Modules Owned: `protocol/` (data models and interface contracts), `orchestrator/` (planning, scheduling, HITL, and artifact handoffs), and `runtime/` (the Agent execution loop and centralized model calls). Also maintains the corresponding tests, interface documentation, and assigned report sections.
+- Features to Implement: An orchestration workflow covering user goal submission, task decomposition, role negotiation, dependency scheduling, tool calls, Critic acceptance checks, deliverable aggregation, and memory updates, as detailed below.
+
+| Feature | Implementation Responsibilities for A | Expected Behavior When Complete |
 | --- | --- | --- |
-| 任务图与跨模块契约 | 使用 Pydantic 定义任务节点、任务图、执行结果、验收结果、子委派请求、HITL 请求等结构；明确必填项、状态和错误信息 | 校验任务 ID、依赖关系、环路、执行角色和必需字段；跨模块调用使用统一模型，输入产物通过相对路径声明 |
-| 规划与角色协商 | Planner 根据目标和检索到的记忆生成任务图；限制规划协商轮次，输出可校验的结构化结果与机器可判的验收条件 | 在设定预算内完成任务拆分和角色分配；协商摘要与任务认领信息通过 D 的总线进入群聊 |
-| 确定性调度 | 根据依赖关系派发任务，管理执行、等待、验收、重试、成功及失败状态 | 上游验收通过后才启动下游；失败具有明确原因和终态，不出现无限重试或永久等待 |
-| Worker 子委派 | 接收子任务请求，由调度器校验并插入任务图，建立父子关联、等待与结果回传关系 | 子委派深度上限为 1，每个父任务最多 2 个子任务；所有子任务经过常规执行与验收，并进入统计 |
-| Agent 主循环 | 串联消息输入、记忆检索、模型决策、工具请求、结构化回报、Critic 验收和任务后反思；集中封装模型调用 | Planner、Worker、Critic 按各自配置运行；仅调用 DeepSeek 或 HKGAI 端点，具备调用预算、超时、重试与错误回报 |
-| HITL 门 | 定义可切换的交互式与策略式 approver；处理澄清、许可、纠偏请求，并记录决定和假设 | 交互模式可以暂停和恢复；无人值守模式按预定义规则批准、拒绝或采用允许的保守默认，不无限等待人工输入 |
-| 验收与产物交接 | 对接可插拔验收策略；任务开始前分发输入，验收通过后归档输出，失败时向 Worker 回传缺陷并按上限重做 | 由 orchestrator 在 `artifacts/<task_id>/` 与领取方工作区间交接副本；未通过验收的输出不对下游开放 |
-| 消息路由与可观测事件 | 与 D 对齐私聊、群聊和内部消息的路由；发出任务分派、子委派、HITL、验收、产物交接等事件 | 私聊仅对相应人与 Agent 可见；群聊可见角色认领和转派摘要；内部工具原始报文不广播到群聊 |
+| Task graph and cross-module contracts | Use Pydantic to define task nodes, task graphs, execution results, acceptance results, sub-delegation requests, and HITL requests; specify required fields, states, and error information | Validate task IDs, dependencies, cycles, assigned roles, and required fields; use shared models for cross-module calls and relative paths to declare input artifacts |
+| Planning and role negotiation | Have the Planner generate a task graph from the goal and retrieved memories; limit planning negotiation rounds and produce validated structured results with machine-checkable acceptance criteria | Complete task decomposition and role assignment within the configured budget; publish negotiation summaries and task-claim information to the group chat through D’s message bus |
+| Deterministic scheduling | Dispatch tasks according to dependencies and manage execution, waiting, acceptance, retry, success, and failure states | Start downstream tasks only after upstream acceptance checks pass; provide clear failure reasons and terminal states without unlimited retries or indefinite waiting |
+| Worker sub-delegation | Receive subtask requests, validate and insert them into the task graph through the scheduler, and establish parent-child relationships, waiting behavior, and result return paths | Limit sub-delegation depth to 1 and allow at most 2 subtasks per parent task; route every subtask through normal execution and acceptance checks and include it in the metrics |
+| Agent execution loop | Connect incoming messages, memory retrieval, model decisions, tool requests, structured reporting, Critic acceptance checks, and post-task reflection; centralize model calls | Run Planner, Worker, and Critic agents according to their respective configurations; call only DeepSeek or HKGAI endpoints and support call budgets, timeouts, retries, and error reporting |
+| HITL gate | Define interchangeable interactive and policy-based approvers; handle clarification, permission, and correction requests, and record decisions and assumptions | Allow interactive execution to pause and resume; in unattended mode, approve, reject, or apply permitted conservative defaults according to predefined rules without waiting indefinitely for human input |
+| Acceptance checks and artifact handoffs | Integrate pluggable acceptance strategies; distribute inputs before task execution, archive outputs after acceptance, and return defect lists to Workers for bounded rework when acceptance fails | Have the orchestrator transfer copies between `artifacts/<task_id>/` and the assigned Agent’s workspace; do not make unaccepted outputs available to downstream tasks |
+| Message routing and observable events | Align private, group, and internal message routing with D; emit events for task assignment, sub-delegation, HITL, acceptance checks, and artifact handoffs | Keep private chats visible only to the relevant human and Agent; show role claims and delegation summaries in group chats; do not broadcast raw internal tool messages to group chats |
 
-- 本次工作的范围：以 A 的三个代码目录为主，承担核心契约制定、W10 首次端到端集成、架构问题修复及演示流程设计。W8 负责协调建仓、基础 CI 和运行环境对齐；W10、W12、W13 达到里程碑后发起 `develop` 到 `main` 的 PR。W11 起由 B 分担集成排障、D 负责指标回归，A 聚焦编排缺陷、接口裁定和架构决策。
-- 分工边界：B 实现工具与容器隔离；C 实现记忆、反思、检索及 Agent profiles；D 实现消息总线、CLI、harness、trace 落盘与指标汇总。A 提供调用接口、集成入口和事件，不代替上述模块的负责人；涉及他人目录的修改先在组内说明并协调。
-- 技术边界：给人阅读的文档产物仅使用 `.md` / `.txt`；UI 保持简单；实际模型服务仅使用 DeepSeek 或 HKGAI。先实现串行调度，再根据测量结果与 B 协作支持少量无依赖任务并发。
+- Scope of This Work: Focus on A’s three code directories, core contract definition, the first end-to-end integration in W10, architectural fixes, and demonstration workflow design. In W8, coordinate repository setup, basic CI, and runtime environment alignment. After the W10, W12, and W13 milestones are met, open PRs from `develop` to `main`. From W11 onward, B shares integration troubleshooting and D owns metric regression checks, while A focuses on orchestration defects, interface decisions, and architecture decisions.
+- Responsibility Boundaries: B implements tools and container isolation; C implements memory, reflection, retrieval, and Agent profiles; D implements the message bus, CLI, harness, trace persistence, and metric aggregation. A provides integration interfaces, entry points, and events while the respective owners remain responsible for those modules. Changes to another member’s directories must be communicated and coordinated with the team beforehand.
+- Technical Boundaries: Human-readable document deliverables must use `.md` or `.txt`; the UI must remain simple; actual model services must be DeepSeek or HKGAI only. Implement serial scheduling first, then collaborate with B to support limited concurrency for independent tasks when justified by measurements.
 
-## 每周工作产出：
+## Weekly Deliverables
 
-| 周次与日期 | 本周工作 | 可交付产出 | 当周验收标准 |
+| Week and Dates | Planned Work | Deliverables | Weekly Acceptance Criteria |
 | --- | --- | --- | --- |
-| **week8：10/19–10/25** | 主持任务图、执行结果、HITL、子委派和事件契约对齐；协调仓库、分支保护、CI 与运行环境；完成编排最小原型 | 契约 v1；任务图与消息样例；核心模型及校验测试；仓库骨架与基础 CI；技术栈和运行环境确认记录 | 契约 v1 经四人确认并合入 `develop`；各成员可按同一模型开发；CI 可执行基础检查。尚未完成项列为 W9 前置补项 |
-| **week9：10/26–11/1** | 实现依赖调度、状态流转、重试边界、子委派插节点和 Agent 主循环骨架；对接 B 的搜索/文件工具、C 的记忆接口及 D 的总线 | 可独立运行的调度器；运行时骨架与统一模型客户端；子委派校验及调度测试；使用接口替身的文本任务流程 | 可按依赖串行完成任务；子任务能被插入、验收并回传；非法任务图和超限委派有明确错误；组织四模块接口检查，代码与 git 工具的完整接入在 W10 验证 |
-| **week10：11/2–11/8** | 主持首次端到端集成；完成交互式/策略式 HITL、产物交接与子委派闭环；接入 B 的代码执行和 git、C 的反思注入及 D 的 harness | 可运行的文本任务与代码任务链路；澄清型、许可型 HITL 场景；端到端测试；首次集成记录；稳定版本 PR | **11/8 前**配合 D 在自建 dev set 上产出目标完成率、子任务完成率和执行时间；策略式 HITL 无人工等待；四类工具可用；由 A 发起稳定版本 PR |
-| **week11：11/9–11/15** | 根据 mid 测试或 dev set 回归定位路由、依赖、状态流转、重试和子委派问题；为 C 的记忆 A/B 实验提供一致的编排入口；整理 §2 初稿 | 编排失败归因清单；修复 PR 与回归用例；路由/协作章节初稿；主要接口和架构基线 | 每项编排失败可关联 trace、原因及处理结论；关键缺陷进入回归测试；与 B、D 完成排障和指标回归分工交接 |
-| **week12：11/16–11/22** | 针对已确认问题加固编排，减少重复调用与无效重试；与 B 联调必要的受控并发；完善异常终态和接口文档 | 加固版本；回归结果与变更前后对比；定型的接口/状态说明；演示流程初稿；稳定版本 PR | 主要接口保持稳定；依赖顺序、子委派上限、HITL 和验收后交接规则不被优化破坏；指标变化有数据解释；由 A 发起加固版本 PR |
-| **week13：11/23–11/29** | 编写并排练现场演示；配合 D 执行正式评测、整理证据；核对架构文档和 §2；完成提交前集成检查 | 演示脚本 `.md`；启动与操作步骤；可复现示例和预期事件；§2 可评审稿；个人真实提交/PR 索引；演示版本 PR | 演示覆盖私聊/群聊、任务分解、子委派、HITL、四类工具及记忆调用；正式指标可追溯到运行记录；文档描述与实际版本一致 |
+| **Week 8: October 19–25** | Lead alignment on task graph, execution result, HITL, sub-delegation, and event contracts; coordinate the repository, branch protection, CI, and runtime environment; build a minimal orchestration prototype | Contract v1; task graph and message examples; core models and validation tests; repository skeleton and basic CI; records of technology stack and runtime environment decisions | Contract v1 is confirmed by all four members and merged into `develop`; every member can develop against the same models; CI can run basic checks. Any unfinished items become prerequisites to address first in W9 |
+| **Week 9: October 26–November 1** | Implement dependency scheduling, state transitions, retry limits, sub-delegation node insertion, and the Agent execution loop skeleton; integrate B’s search/file tools, C’s memory interfaces, and D’s message bus | Independently runnable scheduler; runtime skeleton and centralized model client; sub-delegation validation and scheduling tests; a text-task workflow using interface test doubles | Tasks execute serially in dependency order; subtasks can be inserted, accepted, and returned to their parent tasks; invalid task graphs and excessive delegation produce clear errors; organize interface checks across the four modules, with complete code and git tool integration verified in W10 |
+| **Week 10: November 2–8** | Lead the first end-to-end integration; complete interactive/policy-based HITL, artifact handoffs, and the full sub-delegation workflow; integrate B’s code execution and git tools, C’s reflection injection, and D’s harness | Runnable text-task and code-task workflows; clarification and permission HITL scenarios; end-to-end tests; first integration records; a stable-release PR | **By November 8**, work with D to produce goal completion rate, subtask completion rate, and execution time on the team’s dev set; policy-based HITL requires no human waiting; all four tool categories work; A opens the stable-release PR |
+| **Week 11: November 9–15** | Use the mid test set or dev set regression runs to identify routing, dependency, state-transition, retry, and sub-delegation issues; provide a consistent orchestration entry point for C’s memory A/B experiments; prepare a draft of Section 2 | Orchestration failure analysis; fix PRs and regression cases; draft routing/collaboration section; baseline interfaces and architecture | Each orchestration failure can be linked to a trace, cause, and resolution or disposition; critical defects are covered by regression tests; troubleshooting and metric regression responsibilities are coordinated with B and D |
+| **Week 12: November 16–22** | Harden orchestration against confirmed issues and reduce duplicate calls and ineffective retries; integrate necessary controlled concurrency with B; improve exceptional terminal states and interface documentation | Hardened version; regression results and before/after comparisons; finalized interface/state documentation; draft demonstration workflow; a stable-release PR | Major interfaces remain stable; optimizations preserve dependency order, sub-delegation limits, HITL behavior, and acceptance-before-handoff rules; metric changes are explained with evidence; A opens the hardening-release PR |
+| **Week 13: November 23–29** | Write and rehearse the live demonstration; support D in formal evaluation and evidence collection; check the architecture document and Section 2; complete pre-submission integration checks | Demonstration script in `.md`; startup and operating instructions; reproducible examples and expected events; a review-ready Section 2; an index of genuine personal commits/PRs; a demonstration-release PR | The demonstration covers private/group chats, task decomposition, sub-delegation, HITL, all four tool categories, and memory calls; formal metrics are traceable to run records; documentation matches the actual version |
 
-补充安排：
+Additional arrangements:
 
-- 测试集尚未发放时，继续使用 D 维护的 dev set 推进集成和回归；不把推算日期当作课程承诺，不把 dev set 成绩标作正式成绩。正式测试集发布后再按要求执行评测。
-- W11 末形成主要架构基线，W12 以必要修复和加固为主，W13 聚焦可复现演示及收口，避免临近提交大规模变更接口。
-- 每周一把实际完成项、验证结果和阻塞写入 `docs/weekly/`；按组内规范，每周至少安排 3 次有实质内容的提交，每天及时 push 已完成变更，至少每 3 天通过 PR 同步到 `develop`。提交内容、作者与时间均反映实际工作。
-- W13 提供 §2 可评审稿；W14 及以后按课程最终截止时间完成 §2 定稿，并配合 D 汇总报告和提交记录截图。
+- If a test set has not yet been released, continue integration and regression work using the dev set maintained by D. Do not treat estimated release dates as course commitments or label dev set scores as formal test results. Run the official evaluation as required after the relevant test set is released.
+- Establish the main architecture baseline by the end of W11. Focus W12 on necessary fixes and hardening, and W13 on reproducible demonstrations and finalization. Avoid major interface changes close to submission.
+- Each Monday, record actual completed work, validation results, and blockers in `docs/weekly/`. Follow team guidelines by planning at least 3 substantive commits per week, promptly pushing completed changes each day, and integrating into `develop` through a PR at least every 3 days. Commit content, authorship, and timestamps must reflect the actual work performed.
+- Deliver a review-ready Section 2 in W13. Finalize it in W14 or later according to the official deadline, and support D in assembling the report and commit-history screenshots.
 
-## 交付成果
+## Deliverables
 
-以下路径为计划中的代码和文档位置，具体文件名随团队契约确认；不表示文件已实现。
+The paths below indicate planned code and documentation locations. Specific filenames will be finalized through team agreement on the contracts; their inclusion here does not mean the files have already been implemented.
 
-- 代码：`protocol/` 中的跨模块数据模型与校验；`orchestrator/` 中的规划器、依赖调度器、子委派处理、HITL 门、验收流程和产物交接；`runtime/` 中的 Agent 主循环及统一模型客户端；职责范围内的基础 CI 配置和接口示例。代码通过 `Role_A` 提交并以经评审的 PR 集成。
-- 测试：`tests/` 下 A 负责的模型校验、依赖排序、状态流转、重试上限、子委派、HITL 和产物交接测试；与 B/C/D 共同完成文本任务、代码任务及无人值守批量执行的集成测试。以模型接口替身支持稳定的单元测试，并保留真实允许端点的集成验证记录。
-- 文档：架构总纲及 §2「路由与协作逻辑」；任务图、状态流转、HITL 和跨模块接口说明；编排失败归因与修复记录；W13 演示脚本；每周进展和个人提交/PR 索引。与 D 对齐 §2 的总线小节，供 D 合稿时引用；所有文字文档使用 Markdown 或纯文本。
+- Code: Cross-module data models and validation in `protocol/`; the planner, dependency scheduler, sub-delegation handling, HITL gate, acceptance workflow, and artifact handoffs in `orchestrator/`; the Agent execution loop and centralized model client in `runtime/`; and basic CI configuration and interface examples within A’s scope. Submit code through `Role_A` and integrate it through reviewed PRs.
+- Tests: Tests under `tests/` owned by A for model validation, dependency ordering, state transitions, retry limits, sub-delegation, HITL, and artifact handoffs; integration tests completed jointly with B/C/D for text tasks, code tasks, and unattended batch execution. Use model-interface test doubles to support stable unit tests, and retain records of integration validation against actual permitted endpoints.
+- Documentation: The architecture overview and Section 2, “Routing and Collaboration Logic”; task graph, state-transition, HITL, and cross-module interface specifications; orchestration failure analysis and fix records; the W13 demonstration script; weekly progress reports; and an index of personal commits/PRs. Align the message-bus subsection of Section 2 with D for inclusion in the consolidated report. All written documentation must use Markdown or plain text.
 
-## 协作与依赖
+## Collaboration and Dependencies
 
-- 需要其他成员提供：
+- Inputs Needed from Other Members:
 
-| 成员 | 需要提供的内容 | 对 A 的用途与时间要求 |
+| Member | Required Inputs | Purpose and Timing for A |
 | --- | --- | --- |
-| **B：工具与沙箱** | 统一工具执行入口、工具参数与结果模型、容器工作区映射、限时执行及错误返回；搜索/文件/代码/git 能力；产物读写与交接所需接口 | W8 对齐契约，W9 对接原型，W10 接齐四类工具；用于执行任务和交接产物；W11 起分担集成排障 |
-| **C：记忆与 profiles** | 记忆检索/写入/反思接口，Agent 身份与工具白名单配置，记忆开关及 A/B 实验运行约定 | W8 对齐数据结构，W9 接记忆读写，W10 接反思闭环；用于主循环在执行前读取经验、执行后写入经验 |
-| **D：总线、CLI 与评测** | 私聊/群聊消息模型及订阅发布入口，HITL 问答交互，trace 事件字段，harness 调用入口与 dev set，验收判定与指标统计接口 | W8 固定事件契约，W9 接消息总线，W10 完成批量评测；提供后续回归结果与演示数据 |
+| **B: Tools and Sandboxes** | A shared tool execution entry point, tool parameter and result models, container workspace mappings, execution time limits and error returns; search/file/code/git capabilities; interfaces needed for artifact reads, writes, and handoffs | Align contracts in W8, integrate prototypes in W9, and connect all four tool categories in W10; use these capabilities to execute tasks and transfer artifacts; share integration troubleshooting from W11 onward |
+| **C: Memory and Profiles** | Interfaces for memory retrieval, writing, and reflection; Agent identities and tool allowlist configurations; a memory enable/disable switch and A/B experiment execution conventions | Align data structures in W8, integrate memory reads/writes in W9, and complete the reflection loop in W10; allow the execution loop to retrieve experience before execution and store experience afterward |
+| **D: Message Bus, CLI, and Evaluation** | Private/group message models and publish/subscribe entry points; HITL question-and-answer interaction; trace event fields; the harness entry point and dev set; acceptance-checking and metric interfaces | Finalize event contracts in W8, integrate the message bus in W9, and complete batch evaluation in W10; provide subsequent regression results and demonstration data |
 
-- 需要向其他成员提供：
+- Outputs to Provide to Other Members:
 
-| 对接对象 | A 应提供的内容 |
+| Recipient | Outputs to Be Provided by A |
 | --- | --- |
-| **B** | 可校验的任务、工具调用与结果契约；执行上下文、超时/预算约定、工作区和产物交接请求；可独立验证工具接入的编排示例 |
-| **C** | Agent/任务标识、检索时机、任务执行摘要、Critic 缺陷及最终状态；反思写入时机；可保持其他条件一致的记忆开关接入点 |
-| **D** | 稳定的系统运行入口和结构化返回值；顶层目标、任务节点及动态子节点关联；各阶段时间、HITL、验收和产物事件；§2 正文与演示步骤 |
-| **全组** | 契约 v1、任务图样例、接口变更记录、集成检查清单、阶段稳定版本及架构决策记录 |
+| **B** | Validated task, tool-call, and result contracts; execution context, timeout/budget conventions, workspace and artifact-handoff requests; orchestration examples that allow tool integration to be checked independently |
+| **C** | Agent/task identifiers, retrieval timing, execution summaries, Critic defect reports, and final states; reflection write timing; an integration point for enabling/disabling memory while keeping other conditions consistent |
+| **D** | A stable system execution entry point and structured return values; relationships among top-level goals, task nodes, and dynamically inserted child nodes; stage timing, HITL, acceptance, and artifact events; Section 2 text and demonstration steps |
+| **Entire Team** | Contract v1, task graph examples, interface change records, integration checklists, milestone releases, and architecture decision records |
 
-- 需要共同确认的接口：
+- Interfaces Requiring Joint Confirmation:
 
-| 接口或约定 | 必须确认的内容 | 主要参与方 |
+| Interface or Convention | Items to Confirm | Main Participants |
 | --- | --- | --- |
-| 任务图 | `task_id`、`assignee`、`parent_task`、`depth`、`depends_on`、`inputs`、`acceptance`、`outputs`、`max_retries` 的类型、约束和默认值；验收条件如何表达为机器可判规则 | A/B/C/D |
-| 状态与结果 | Worker 输出、Critic 结论、失败原因和重试次数含义；依赖失败时下游如何结束；顶层目标成功的判定规则 | A/B/D |
-| 子委派 | 请求字段、深度与数量上限、父任务等待/恢复条件、子任务失败的传播方式，以及动态节点统计口径 | A/B/D |
-| 工具与沙箱 | 工具名称、参数、返回结果、执行超时、权限拒绝及错误分类；文件与代码工具在容器内执行，搜索与 git 经宿主机工具层执行 | A/B，C 提供工具白名单 |
-| 产物交接 | 输入来源、目标相对路径、已验收状态、归档时机、同一任务重试后的产物版本处理及交接事件 | A/B/D |
-| 记忆与反思 | 记忆检索输入/输出、Agent 隔离标识、任务完成后的记录内容、反思触发条件及禁用记忆时的行为 | A/C |
-| HITL | 请求 ID、会话归属、类型、上下文、可选决定、超时/拒绝规则、暂停恢复机制及策略式决策记录 | A/D，B 对齐关键工具操作 |
-| 总线与 trace | `run_id`、会话 ID、任务 ID、Agent ID、事件类型、时间与耗时字段；私聊/群聊可见性；动态子任务与产物交接记录 | A/D |
-| 验收与 harness | `file_exists`、`text_contains`、`pytest_passes` 等判定策略的调用/返回模型及实现归属；运行入口、终态、目标/子任务分母、重试是否重复计数、计时起止点 | A/D，B 提供代码执行能力 |
-| 模型与运行配置 | DeepSeek/HKGAI 端点、模型配置、调用预算、重试与结构化输出能力；CI 和本地运行环境 | A/B/C/D |
+| Task graph | Types, constraints, and defaults for `task_id`, `assignee`, `parent_task`, `depth`, `depends_on`, `inputs`, `acceptance`, `outputs`, and `max_retries`; how acceptance criteria are represented as machine-checkable rules | A/B/C/D |
+| States and results | Worker outputs, Critic decisions, failure reasons, and the meaning of retry counts; how downstream tasks terminate after a dependency fails; the success criteria for a top-level goal | A/B/D |
+| Sub-delegation | Request fields, depth and count limits, parent-task waiting/resumption conditions, subtask failure propagation, and the counting rules for dynamic nodes | A/B/D |
+| Tools and sandboxes | Tool names, parameters, results, execution timeouts, permission denials, and error categories; file and code tools execute inside containers, while search and git tools execute through the host-side tool layer | A/B, with C providing tool allowlists |
+| Artifact handoffs | Input sources, destination relative paths, accepted status, archiving timing, artifact version handling after retries of the same task, and handoff events | A/B/D |
+| Memory and reflection | Memory retrieval inputs/outputs, Agent isolation identifiers, records written after task completion, reflection triggers, and behavior when memory is disabled | A/C |
+| HITL | Request IDs, session ownership, request types, context, available decisions, timeout/rejection rules, pause/resume behavior, and records of policy-based decisions | A/D, with B aligning critical tool operations |
+| Message bus and traces | `run_id`, session IDs, task IDs, Agent IDs, event types, timestamps, and duration fields; private/group visibility; dynamic subtask and artifact-handoff records | A/D |
+| Acceptance checks and harness | Call/return models and implementation ownership for strategies such as `file_exists`, `text_contains`, and `pytest_passes`; execution entry points, terminal states, goal/subtask denominators, whether retries count more than once, and timing start/end points | A/D, with B providing code execution capabilities |
+| Model and runtime configuration | DeepSeek/HKGAI endpoints, model configuration, call budgets, retries, and structured-output capabilities; CI and local runtime environments | A/B/C/D |
 
-协作采用 `Role_A → develop → main` 的 PR 流程，至少 1 人 review，使用 merge commit 保留真实开发记录。PR 写明改动内容、验证方法及受影响模块；合入前同步 `develop` 并解决冲突。阻塞超过半天、无法判断的合并冲突或需要修改他人文件时，及时在组内说明。
+Collaboration follows the `Role_A → develop → main` PR workflow, requires at least one reviewer, and uses merge commits to preserve the actual development history. PRs must describe the changes, validation methods, and affected modules. Synchronize with `develop` and resolve conflicts before merging. Notify the team promptly when blocked for more than half a day, when a merge conflict cannot be resolved confidently, or when another member’s files need modification.
 
-## 时间计划
+## Timeline
 
-- 第一阶段：**契约与独立开发（W8–W9，10/19–11/1）**。确认数据模型、接口及模块边界，落实仓库和 CI，完成调度器、主循环与子委派骨架。W8 未完成事项在 W9 优先补齐；出口是契约 v1 稳定、A 模块单测通过，并能使用替身接口运行完整调度流程。
-- 第二阶段：**首次集成与评测基线（W10，11/2–11/8）**。接齐四类工具、记忆、总线、CLI 和 harness，完成 HITL 与验收后产物交接。**11/8 前必须产出第一组 dev set 指标**，由 D 负责统计验收，A 组织编排问题修复并发起稳定版本 PR。
-- 第三阶段：**问题收敛、加固与交付（W11–W13，11/9–11/29）**。依据实际发布的测试集及 dev set 回归修复架构问题，配合记忆 A/B 实验，完成 W12 加固和 W13 演示。W11 起 B 分担集成排障、D 承担指标回归；A 负责核心接口与架构、演示脚本和 §2 文稿。W14 起按课程通知完成报告定稿与提交配合。
+- Phase 1: **Contracts and Independent Development (W8–W9, October 19–November 1)**. Confirm data models, interfaces, and module boundaries; establish the repository and CI; and complete the scheduler, execution loop, and sub-delegation skeleton. Prioritize unfinished W8 items in W9. Exit criteria: stable Contract v1, passing unit tests for A’s modules, and a complete scheduling workflow that can run using interface test doubles.
+- Phase 2: **First Integration and Evaluation Baseline (W10, November 2–8)**. Integrate all four tool categories, memory, the message bus, CLI, and harness; complete HITL and artifact handoffs after acceptance. **The first set of dev set metrics must be produced by November 8.** D verifies the metric outputs, while A coordinates orchestration fixes and opens the stable-release PR.
+- Phase 3: **Issue Resolution, Hardening, and Delivery (W11–W13, November 9–29)**. Fix architectural issues based on the test sets actually released and dev set regression results; support memory A/B experiments; complete W12 hardening and the W13 demonstration. From W11 onward, B shares integration troubleshooting and D handles metric regression checks. A remains responsible for core interfaces and architecture, the demonstration script, and the Section 2 manuscript. From W14 onward, finalize the report and support submission according to course announcements.
 
-## 验收标准
+## Acceptance Criteria
 
-- [ ] **主要功能完成**：`protocol/`、`orchestrator/`、`runtime/` 实现并可通过统一入口运行；高层目标可形成任务图，依赖调度、角色分配和结构化回报正常。
-- [ ] **子委派闭环完成**：子任务由调度器插入，深度不超过 1、每个父任务最多 2 个；父任务可等待和接收结果；子任务经过验收且进入指标统计。
-- [ ] **HITL 可演示且可批量运行**：至少演示澄清型与许可型场景；交互式可暂停恢复，策略式按既定规则处理并记录决定，不永久阻塞评测。
-- [ ] **产物交接正确**：输入按任务声明分发；只有 Critic 验收通过的产物进入归档并提供给下游；交接过程留有可追溯事件。
-- [ ] **相关测试通过**：任务图校验、依赖顺序、重试上限、子委派、HITL、失败传播与产物交接测试通过；CI 的格式检查及约定测试通过。
-- [ ] **文档完善**：核心契约、状态流转、架构总纲、§2、演示脚本和个人进展记录齐全，描述与实际代码一致。
-- [ ] **与其他模块联调完成**：与 B 的工具/沙箱、C 的记忆/profiles、D 的总线/CLI/harness 接口通过端到端验证；私聊/群聊和可见性符合约定。
-- [ ] **评测数据可复核**：11/8 前形成 dev set 基线；目标完成率、含动态子节点的子任务完成率及执行时间均有完整记录；重试不重复增加逻辑任务数，结果不因状态遗漏而虚增。
-- [ ] **课程约束满足**：运行时仅调用 DeepSeek 或 HKGAI 服务；文字文档仅使用 Markdown/纯文本；git 工具面向独立 sandbox 仓库；Agent 使用 B 提供的隔离环境执行。
-- [ ] **协作与交付证据齐全**：个人贡献可由真实 commit、PR、测试记录与周报对应验证；完成 W13 演示，并配合 W14 及以后的报告定稿和截图汇总。
+- [ ] **Core features completed**: `protocol/`, `orchestrator/`, and `runtime/` are implemented and runnable through a shared entry point; high-level goals can be converted into task graphs, with working dependency scheduling, role assignment, and structured reporting.
+- [ ] **Complete sub-delegation workflow**: Subtasks are inserted by the scheduler, with a maximum depth of 1 and no more than 2 subtasks per parent; parent tasks can wait for and receive results; subtasks undergo acceptance checks and are included in the metrics.
+- [ ] **HITL supports demonstrations and batch execution**: Demonstrate at least clarification and permission scenarios; interactive execution can pause and resume; policy-based execution follows predefined rules and records decisions without permanently blocking evaluation.
+- [ ] **Correct artifact handoffs**: Inputs are distributed according to task declarations; only artifacts accepted by the Critic are archived and made available to downstream tasks; handoffs generate traceable events.
+- [ ] **Relevant tests pass**: Tests for task graph validation, dependency ordering, retry limits, sub-delegation, HITL, failure propagation, and artifact handoffs pass; CI formatting checks and agreed test suites also pass.
+- [ ] **Documentation complete**: Core contracts, state transitions, the architecture overview, Section 2, the demonstration script, and personal progress records are complete and consistent with the actual code.
+- [ ] **Integration with other modules complete**: End-to-end validation passes for B’s tools/sandboxes, C’s memory/profiles, and D’s message bus/CLI/harness; private/group chats and visibility rules meet the agreed requirements.
+- [ ] **Evaluation data can be verified**: Establish the dev set baseline by November 8; retain complete records for goal completion rate, subtask completion rate including dynamic child nodes, and execution time; retries do not increase the count of logical tasks, and omitted task states do not inflate results.
+- [ ] **Course constraints satisfied**: Runtime model calls use only DeepSeek or HKGAI services; written documentation uses Markdown/plain text only; git tools operate on a separate sandbox repository; Agents execute in the isolated environments provided by B.
+- [ ] **Collaboration and delivery evidence complete**: Personal contributions can be verified against genuine commits, PRs, test records, and weekly reports; complete the W13 demonstration and support report finalization and screenshot collection in W14 and beyond.
