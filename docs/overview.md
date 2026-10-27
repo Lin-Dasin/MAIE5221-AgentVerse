@@ -92,7 +92,20 @@ other's workspace, but downstream tasks need upstream output.
 | Directory | Owner | Access |
 |---|---|---|
 | `workspaces/<agent>/` | that agent | only its own container, read and write |
+| `workspaces/<agent>/memory/` | that agent | private memory, survives task cleanup and container rebuild |
 | `artifacts/<task_id>/` | orchestrator | written by the host process, invisible to agents |
+
+Subdirectories inside a workspace do not share the same lifetime:
+
+| Subdirectory | Lifetime |
+|---|---|
+| `inputs/` | rebuilt for every task |
+| `outputs/` | rebuilt for every task; copied to `artifacts/<task_id>/` after acceptance |
+| `memory/` | persists across tasks and across container rebuilds |
+
+Memory lives inside the workspace rather than in a central directory so that
+isolation is verifiable from the filesystem, not merely asserted by code: agent A
+cannot read agent B's memory because A's container never mounts it.
 
 1. Before a task starts, the orchestrator copies the artifacts named in `inputs`
    from `artifacts/<from_task>/` into `workspaces/<assignee>/inputs/`.
@@ -116,6 +129,8 @@ other's workspace, but downstream tasks need upstream output.
 | `harness/` | D | Evaluation harness |
 | `ui/` | D | CLI |
 | `bus/` | D | Message bus and trace |
+| `docker/` | B | Container image and compose |
+| `docs/` | shared | Layout per `docs/README.md`; D merges the report but does not rewrite other members' chapters |
 
 ## 7. Out of scope
 
@@ -146,9 +161,35 @@ inside the container; web search and git run on the host.
 Two completion figures are reported, because the course specification mentions
 sub-tasks and overarching goals:
 
-- `goal_completion_rate`: passed tasks / total tasks
+- `goal_completion_rate`: goals passed / total goals, where a goal passes when its
+  final artifact exists and that artifact meets its acceptance criteria (contract 10)
 - `subtask_completion_rate`: passed nodes / all nodes in the task graph, including
   worker-requested subtasks
 
 Execution time is measured from task dispatch to artifact generation. All three are
-produced by `harness/`, not estimated by hand.
+produced by `harness/`, not estimated by hand (see contract 2 below).
+
+## 10. Cross-module contracts
+
+These are binding. Each row names exactly one owner; everyone else conforms rather
+than re-implements. Changing a contract is the owner's call, announced in the group,
+and this document is updated in the same week.
+
+| # | Contract | Owner | Rule |
+|---|---|---|---|
+| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | Implemented once in `harness/verdict.py`. The orchestrator calls it and must not implement its own checks. |
+| 2 | Metric computation | D | Only `harness/` computes `goal_completion_rate`, `subtask_completion_rate` and duration. Other modules expose raw facts, never aggregates. |
+| 3 | Event schema | D | Defined in `bus/events.py` and frozen. A and B emit events with those fields only; a new field requires a schema change first. |
+| 4 | `ToolResult` | A | One pydantic model in `protocol/`, fields `ok` `data` `error` `elapsed` `meta`. Tools return this model instead of defining their own envelope. |
+| 5 | Memory location and workspace lifecycle | B, C | Memory at `workspaces/<agent>/memory/<agent_id>.jsonl`. `inputs/` and `outputs/` are rebuilt per task; `memory/` survives cleanup and container rebuild. |
+| 6 | `AgentProfile` | A model, C data | A defines the model in `protocol/`; C fills `profiles/*.yaml`. The runtime loads declared fields only. |
+| 7 | Failure vocabulary | A | Enum in `protocol/`. C tags reflections with it and D aggregates by it. No module invents new strings. |
+| 8 | Retry levels | A task, B tool | Task-level `max_retries` lives in the task graph; tool-level `tool_retries` lives in tool config. Metrics count task-level retries only. |
+| 9 | `memory_enabled` | D, A, C | The harness passes it in `RunConfig`; the runtime forwards it to memory retrieval. Memory must run normally when false. |
+| 10 | Goal verdict | D | `goal_passed` means the final artifact exists and its acceptance passes. It does not require every node to pass. |
+| 11 | `docs/` layout | shared | Write access is shared; layout and naming are defined in `docs/README.md`. |
+| 12 | HITL decision record | A | A writes the decision and assumptions into the task result; D's trace is a copy. On conflict, the task result wins. |
+
+Contract 10 is why two completion figures are reported: a goal can be delivered
+while a non-critical node failed, and the subtask figure keeps that visible instead
+of hiding it.
