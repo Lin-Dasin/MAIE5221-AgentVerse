@@ -9,7 +9,7 @@ A multi-agent collaboration platform. A user states a goal in natural language; 
 - Lets a Worker request a subtask when it lacks a needed capability; the scheduler reassigns that subtask to another agent
 - Pauses to ask the human when it hits ambiguity or a risky operation; when no human is available, a predefined policy decides instead and every decision is logged
 - Gives each agent its own working directory and private memory. After a task, the agent writes a reflection; before a similar task, it retrieves and reuses that reflection, so it improves over repeated runs
-- Records task completion rate and execution time automatically, and supports batch runs over a test set
+- Records both goal-level and subtask-level completion rate plus execution time automatically, and supports batch runs over a test set
 
 ## Pipeline
 
@@ -30,3 +30,5 @@ User goal
 ```
 
 Deliverables are limited to Markdown and plain text.
+
+Project structure and cross-module contracts: [docs/overview.md](docs/overview.md).
