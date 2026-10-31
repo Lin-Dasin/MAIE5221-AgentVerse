@@ -10,7 +10,7 @@
 
 ## 1. Team Roles
 
-> The source of truth for this table is Section 4.1 of the internal project specification. If anything diverges, that document wins.
+> Team scope follows [project-plan.md](../project-plan.md). Callable contracts follow `protocol/models.py` and `protocol/ports.py`; see [the integration guide](../usage-and-integration.md). An old example must not override those signatures.
 
 | Role | Scope | Code directories | Report chapter |
 |---|---|---|---|
@@ -46,17 +46,25 @@
 | C | Workspace path-resolution API (where memory files live) | Memory file naming convention per agent |
 | D | Tool-layer trace events (latency, success, `search_degraded` flag) | Field format for trace events |
 
+Implement the async `ToolExecutor.execute(call: ToolCall, context: ExecutionContext)
+-> ToolResult` facade and supply `list[ToolDefinition]`. All models come from
+`protocol.models`. Each definition's name must match C's `AgentProfile.tools`;
+set `requires_approval` for critical operations. B's executor uses the same root
+as A's `build_service()`: `workspaces/<context.agent_id>/` is the assigned mount.
+Return `ToolResult(ok=False, error=...)` for expected execution failures. Validate
+arguments and enforce tool time/resource limits inside B's implementation.
+
 ---
 
 ## 3. Weekly Work Plan
 
 | Week | Tasks | Verifiable output | Acceptance |
 |---|---|---|---|
-| W8 10/19–10/25 | Container baseline: Dockerfile and compose able to start 3 long-running containers; executor prototype; path-traversal validation | `docker/` brings the stack up with one command; `sandbox/executor.py` runs code and captures stdout/stderr/exit code | Unit tests cover three cases: path traversal, execution timeout, non-zero exit |
+| W8 10/19–10/25 | Container baseline: Dockerfile and compose map each configured agent to its private container; executor prototype and path validation | `docker/` brings the stack up with one command; `sandbox/executor.py` runs code and captures stdout/stderr/exit code | Document mount boundaries and resource limits; checks cover workspace-boundary validation, execution timeout and non-zero exit handling |
 | W9 10/26–11/1 | Search tool (API first, scraping fallback); file read/write tool; unified Tool interface | `tools/search.py`, `tools/fs.py`; JSON schema per tool | Unit tests pass; each tool is invoked at least once from the real agent loop |
 | W10 11/2–11/8 | Code-execution tool (time and memory capped); git tool (host side, pushes to a sandbox repo); fix integration defects | `tools/code_exec.py`, `tools/git.py` | Code-type tasks in the dev set run end to end; push succeeds against the sandbox repo with no change to the main repo |
 | W11 11/9–11/15 | Timeout policy (tool level and task level); crash recovery (container restart, stale-artifact cleanup) | `sandbox/health.py` | Killing a container manually leads to recovery or a clean failure with no dirty files left |
-| W12 11/16–11/22 | Concurrency and rate limiting (configurable concurrency, backoff on 429); one-command environment startup | Startup script, concurrency config | Three concurrent runs keep separate logs; a fresh clone is runnable within ten minutes |
+| W12 11/16–11/22 | Coordinate concurrency with A; rate limiting and one-command startup | Startup script, concurrency config | Parallel runs use separate roots and container mappings until A/B add shared-root concurrency; logs remain separate |
 | W13 11/23–11/29 | Environment fallback, on-site support for the demo | Reproduction guide | The demo script completes on a clean environment |
 | W14 onward | Finalise Architecture Document §3 | §3 chapter | Consistent with the code, threat model included |
 
@@ -77,7 +85,7 @@
 | Item | From | Needed by | Fallback if late |
 |---|---|---|---|
 | Tool-call schema (input and output shapes) | A | End of W8 | Implement against a draft JSON schema, adapt the wrapper layer once the contract is final |
-| Workspace directory convention (`workspaces/<agent>/`, `artifacts/<task_id>/`) | A | End of W8 | Implement per Section 1.5 of the specification |
+| Workspace directory convention (`workspaces/<agent>/`, `artifacts/<run_id>/<task_id>/`) | A | End of W8 | Use the current contract in `docs/overview.md` and `orchestrator/artifacts.py` |
 | Trace event field format | D | Early W9 | Instrument the minimum fields first: tool name, latency, success |
 
 **What others need from me**
@@ -94,8 +102,8 @@
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Container path mapping misbehaves on Windows | File tools cannot see artifacts | Run inside WSL2 paths only, never `/mnt/c`; validate mount points at startup |
-| Multiple containers exhaust memory | The 16 GB host starts swapping | Cap each container at 512 MB–1 GB; start and stop on demand |
+| Container path mapping differs across hosts | File tools cannot see artifacts | Agree on the Linux sandbox image and relative workspace paths; Windows uses WSL2, macOS/Linux use compatible Docker mounts |
+| Multiple containers exhaust memory | The host starts swapping | Configure per-container limits; start the required agents once per session and keep them running across tasks; reassess limits against actual dependencies |
 | Git credentials leak | Generated code reads or exfiltrates the token | Run the git tool on the host only; the token never enters a container |
 | Search rate limiting or IP blocking | Task timeouts, lower completion rate | API first with scraping fallback; emit a `search_degraded` flag for later statistics |
 | Inconsistent tool return shapes | A has to write per-tool special cases | All tools share one envelope: `{ok, data, error, elapsed, meta}` |
@@ -118,3 +126,4 @@ A task is done only when all four hold:
 | Date | Change |
 |---|---|
 | 2026-10-25 | Initial version, translated from the Chinese draft |
+| 2026-10-29 | Aligned executor contract, run-scoped archives, container lifecycle and serial/concurrent boundaries; see `docs/changelog.md` |

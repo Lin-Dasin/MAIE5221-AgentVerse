@@ -1,7 +1,10 @@
 # Project Overview
 
-This document is the alignment reference for the team. If code and this document
-disagree, the code wins and this document gets updated within two days.
+This document explains the current cross-module contract. Callable signatures are
+defined in `protocol/models.py` and `protocol/ports.py`; the team schedule is in
+[project-plan.md](project-plan.md). Course requirements remain authoritative even
+when implementation is incomplete. Record gaps instead of silently relaxing them.
+See [usage and integration](usage-and-integration.md) for current status and setup.
 
 ## 1. What we are building
 
@@ -16,7 +19,7 @@ that persists across tasks.
 Models are served through the DeepSeek or HKGAI API only. OpenAI and Anthropic
 APIs are prohibited by the course specification.
 
-## 2. Required capabilities
+## 2. Required capabilities (target design, not a completion claim)
 
 | # | Capability | How we satisfy it |
 |---|---|---|
@@ -26,6 +29,12 @@ APIs are prohibited by the course specification.
 | 4 | Per-agent memory and evolution across tasks | Private memory file per agent; reflections written after a task and retrieved before similar tasks |
 | 5 | Sandbox isolation: separate working directory and execution environment per agent | One container per agent, its own workspace mounted, path validation as a second line of defence |
 | 6 | Tools: web search, file CRUD, code execution, git commit and push | Four tool families in `tools/`, executed either in the container or on the host |
+
+Currently A implements planning and worker execution. `Verifier.check()` is a
+deterministic acceptance port; a separate conversational Critic agent is still
+planned. Worker memory hooks exist; Planner automatic memory and Critic lifecycle
+remain A/C integration work. Private/group chat routing remains A/D integration
+work. B/C/D production adapters are not included in the current local snapshot.
 
 ## 3. Execution pipeline
 
@@ -65,9 +74,8 @@ pydantic model and must not be redefined elsewhere.
     {"from_task": "t1", "path": "brief.md", "as": "inputs/brief.md"}
   ],
   "acceptance": [
-    "outputs/competitor_pricing.md exists",
-    "covers at least 3 vendors",
-    "each price has a source link"
+    {"type": "file_exists", "path": "outputs/competitor_pricing.md"},
+    {"type": "text_contains", "path": "outputs/competitor_pricing.md", "text": "Sources"}
   ],
   "outputs": ["outputs/competitor_pricing.md"],
   "max_retries": 2
@@ -77,6 +85,11 @@ pydantic model and must not be redefined elsewhere.
 Rules:
 
 - `acceptance` must be machine-checkable. "High quality" cannot be counted.
+- The Role A implementation uses typed `AcceptanceRule` objects, not free-text
+  assertions. The initial vocabulary is `file_exists`, `text_contains` and
+  `pytest_passes`; D owns their actual interpretation and implementation. A file
+  existence check alone does not establish content quality. New criteria require
+  agreement with D and an evaluator implementation.
 - `inputs` never contains an absolute path or another agent's workspace path.
 - `depth` is 0 for planner-created tasks and 1 for worker-requested subtasks.
   Deeper nesting is not supported.
@@ -93,14 +106,14 @@ other's workspace, but downstream tasks need upstream output.
 |---|---|---|
 | `workspaces/<agent>/` | that agent | only its own container, read and write |
 | `workspaces/<agent>/memory/` | that agent | private memory, survives task cleanup and container rebuild |
-| `artifacts/<task_id>/` | orchestrator | written by the host process, invisible to agents |
+| `artifacts/<run_id>/<task_id>/` | orchestrator | written by the host process, invisible to agents |
 
 Subdirectories inside a workspace do not share the same lifetime:
 
 | Subdirectory | Lifetime |
 |---|---|
-| `inputs/` | rebuilt for every task |
-| `outputs/` | rebuilt for every task; copied to `artifacts/<task_id>/` after acceptance |
+| `inputs/` | rebuilt for every task attempt |
+| `outputs/` | rebuilt for every task attempt; copied to `artifacts/<run_id>/<task_id>/` after acceptance |
 | `memory/` | persists across tasks and across container rebuilds |
 
 Memory lives inside the workspace rather than in a central directory so that
@@ -108,12 +121,21 @@ isolation is verifiable from the filesystem, not merely asserted by code: agent 
 cannot read agent B's memory because A's container never mounts it.
 
 1. Before a task starts, the orchestrator copies the artifacts named in `inputs`
-   from `artifacts/<from_task>/` into `workspaces/<assignee>/inputs/`.
+   from `artifacts/<run_id>/<from_task>/` into `workspaces/<assignee>/inputs/`.
 2. The worker reads only its own `inputs/` and writes to `outputs/`.
 3. After the critic passes the task, the orchestrator copies `outputs/` into
-   `artifacts/<task_id>/`, making it available downstream.
+   `artifacts/<run_id>/<task_id>/`, making it available downstream.
 4. A failed task never reaches `artifacts/`, so downstream work cannot consume
    unverified output.
+
+The implementation namespaces archives by run:
+`artifacts/<run_id>/<task_id>/`. References in `inputs` remain task-relative,
+so an output `outputs/brief.md` is referenced as `path: brief.md`. Task acceptance
+paths are workspace-relative; `TaskGraph.goal_acceptance` paths are relative to
+the final task's archive. `memory/` is not removed between runs. Suspended parent
+inputs/outputs are saved under `.agentverse-state/<run_id>/` and restored before
+resumption, including when the child uses the same agent. Runs sharing a workspace
+root are serialized by an exclusive lease.
 
 ## 6. Module map
 
@@ -144,6 +166,10 @@ cannot read agent B's memory because A's container never mounts it.
 
 Six variables, defined in `.env.example`:
 
+Search/Git fallback behavior below is required of B's future adapters, not yet
+implemented here. The current client supports DeepSeek only. HKGAI needs a
+separate adapter; copying `.env.example` does not load environment variables.
+
 | Variable | Purpose | If missing |
 |---|---|---|
 | `LLM_BASE_URL` | DeepSeek or HKGAI endpoint | startup fails |
@@ -166,30 +192,60 @@ sub-tasks and overarching goals:
 - `subtask_completion_rate`: passed nodes / all nodes in the task graph, including
   worker-requested subtasks
 
-Execution time is measured from task dispatch to artifact generation. All three are
-produced by `harness/`, not estimated by hand (see contract 2 below).
+For the integration baseline, execution time is
+`(RunResult.finished_at - RunResult.started_at).total_seconds()` from `run_goal()`;
+it includes planning, waiting, execution, final verification and reflection work
+completed before return. Do not start timing at the first Worker. D should also
+retain stage timestamps if an official harness specifies another endpoint. All
+three aggregates belong to `harness/` (contract 2); the harness is not implemented
+in this local snapshot. Failed planning still contributes to the goal denominator.
 
 ## 10. Cross-module contracts
 
-These are binding. Each row names exactly one owner; everyone else conforms rather
-than re-implements. Changing a contract is the owner's call, announced in the group,
-and this document is updated in the same week.
+These are the current integration baseline for team review. The listed owner or
+owners maintain each contract; callers reuse it rather than reimplement it.
+Contract changes require a reviewed PR, synchronized documentation and a changelog
+entry. This local alignment does not claim that review has already happened.
 
 | # | Contract | Owner | Rule |
 |---|---|---|---|
-| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | Implemented once in `harness/verdict.py`. The orchestrator calls it and must not implement its own checks. |
+| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | To be implemented once in `harness/verdict.py` behind `Verifier.check()`. The orchestrator calls it; code-based checks use B's sandbox. |
 | 2 | Metric computation | D | Only `harness/` computes `goal_completion_rate`, `subtask_completion_rate` and duration. Other modules expose raw facts, never aggregates. |
-| 3 | Event schema | D | Defined in `bus/events.py` and frozen. A and B emit events with those fields only; a new field requires a schema change first. |
+| 3 | Event schema | D | To be defined in `bus/events.py`; not yet frozen or implemented. D maps A's Observer callbacks and B's tool instrumentation to it. |
 | 4 | `ToolResult` | A | One pydantic model in `protocol/`, fields `ok` `data` `error` `elapsed` `meta`. Tools return this model instead of defining their own envelope. |
 | 5 | Memory location and workspace lifecycle | B, C | Memory at `workspaces/<agent>/memory/<agent_id>.jsonl`. `inputs/` and `outputs/` are rebuilt per task; `memory/` survives cleanup and container rebuild. |
 | 6 | `AgentProfile` | A model, C data | A defines the model in `protocol/`; C fills `profiles/*.yaml`. The runtime loads declared fields only. |
 | 7 | Failure vocabulary | A | Enum in `protocol/`. C tags reflections with it and D aggregates by it. No module invents new strings. |
 | 8 | Retry levels | A task, B tool | Task-level `max_retries` lives in the task graph; tool-level `tool_retries` lives in tool config. Metrics count task-level retries only. |
-| 9 | `memory_enabled` | D, A, C | The harness passes it in `RunConfig`; the runtime forwards it to memory retrieval. Memory must run normally when false. |
+| 9 | `memory_enabled` | D, A, C | The harness passes it in `RunConfig`; false disables historical memory retrieval/injection while task execution continues. `write_memory` independently controls post-task reflection writes. D/C must fix both flags and initial memory snapshots in experiments. |
 | 10 | Goal verdict | D | `goal_passed` means the final artifact exists and its acceptance passes. It does not require every node to pass. |
 | 11 | `docs/` layout | shared | Write access is shared; layout and naming are defined in `docs/README.md`. |
 | 12 | HITL decision record | A | A writes the decision and assumptions into the task result; D's trace is a copy. On conflict, the task result wins. |
+| 13 | Memory facade | C implements, A calls | Async `retrieve(agent_id, task) -> str` and `reflect(task, result) -> None`; `result.critique` may be absent. Record-level helpers stay internal to C. |
+| 14 | Application assembly | A helper, D application | `orchestrator.bootstrap.build_service()` receives real adapters; D owns environment loading, container lifecycle coordination, trace flush and client shutdown. |
+| 15 | Progress and change records | shared | Progress goes in PRs/tracking issues; contract/document changes go in `docs/changelog.md`. No `docs/weekly/` directory. |
 
 Contract 10 is why two completion figures are reported: a goal can be delivered
 while a non-critical node failed, and the subtask figure keeps that visible instead
 of hiding it.
+
+## 11. Role A implementation and integration status
+
+The current Role A implementation draft defines its shared models in
+`protocol/models.py`, adapters in `protocol/ports.py`, and a validated example in
+`protocol/example_graph.json`. Full implementation and integration notes are in
+`docs/report/section-2.md`.
+
+The structured acceptance representation, additional model fields and adapter
+signatures are ready for B/C/D review; this document does not claim that the team
+has already approved them. `harness/verdict.py` and `bus/events.py` remain D's
+responsibility. `Observer` contains typed callbacks which D maps to its event
+schema; it does not introduce a competing event format.
+
+Offline tests exercise A against explicitly scripted B/C/D test doubles. They
+do not constitute dev/mid/final evaluation results, container-isolation proof, or
+verification of live provider/tool integration.
+
+For formal evaluation, D supplies the dataset's fixed goal acceptance rules via
+`CollaborationService.run_goal(..., goal_acceptance=rules)`. The Planner preserves
+these rules rather than replacing them with model-proposed criteria.
