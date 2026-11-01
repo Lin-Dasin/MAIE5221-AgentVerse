@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from protocol.models import ToolDefinition
 from sandbox.executor import RegisteredTool
+from tools.code_exec import CODE_EXEC, run_code
 from tools.fs import (
     FILE_DELETE,
     FILE_LIST,
@@ -42,6 +43,11 @@ def build() -> dict[str, RegisteredTool]:
             definition=FILE_DELETE,
             handler=delete_file,
             required=("path",),
+        ),
+        CODE_EXEC.name: RegisteredTool(
+            definition=CODE_EXEC,
+            handler=run_code,
+            required=("code",),
         ),
     }
 
