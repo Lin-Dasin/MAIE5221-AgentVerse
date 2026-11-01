@@ -26,6 +26,15 @@ from sandbox.paths import PathViolation
 Handler = Callable[[dict[str, Any], Path, ExecutionContext], Any]
 
 
+class ToolFailure(Exception):
+    """Raised by a handler for an expected failure.
+
+    The message is returned to the caller verbatim, without the
+    ``invalid argument`` prefix that ``ValueError`` gets. Use it for runtime
+    problems (timeout, upstream unreachable) rather than bad arguments.
+    """
+
+
 @dataclass(frozen=True)
 class RegisteredTool:
     """A tool definition bound to its implementation."""
@@ -76,6 +85,8 @@ class SandboxToolExecutor:
             value = tool.handler(call.arguments, workspace, context)
             if inspect.isawaitable(value):
                 value = await value
+        except ToolFailure as exc:
+            return failure(str(exc))
         except PathViolation as exc:
             return failure(str(exc))
         except FileNotFoundError as exc:
@@ -96,4 +107,4 @@ class SandboxToolExecutor:
         )
 
 
-__all__ = ["Handler", "RegisteredTool", "SandboxToolExecutor"]
+__all__ = ["Handler", "RegisteredTool", "SandboxToolExecutor", "ToolFailure"]
