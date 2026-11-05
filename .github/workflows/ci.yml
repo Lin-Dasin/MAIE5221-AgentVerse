@@ -16,8 +16,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install tooling
-        run: pip install ruff pytest pytest-asyncio
+      - name: Install project and test dependencies
+        run: python -m pip install -e '.[dev]'
 
       - name: Lint
         run: ruff check .
