@@ -24,7 +24,11 @@ def test_offline_command_writes_real_verdicts(tmp_path, capsys, fail_on_goal_fai
     assert len({case["run_id"] for case in report["tasks"]}) == 6
     assert all(case["token_scope"] == "worker_only" for case in report["tasks"])
     assert all(case["duration_scope"] == "fixed_graph" for case in report["tasks"])
-    assert all(case["trace_path"] is None for case in report["tasks"])
+    for case in report["tasks"]:
+        trace = Path(case["trace_path"])
+        events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+        assert all(event["run_id"] == case["run_id"] for event in events)
+        assert events[-1]["event"] == "run_finished"
     assert all(case["rejected_result"] is None for case in report["tasks"])
     assert all(
         "Invalid returned records" not in warning

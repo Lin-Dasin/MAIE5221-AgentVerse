@@ -3,7 +3,9 @@
 import asyncio
 from pathlib import Path
 
+from bus.trace import TRACE_FILENAME, JsonlTrace
 from harness.cases import EvaluationCase, FixtureStep
+from harness.runner import TracedService
 from harness.verdict import FileVerifier
 from orchestrator.approvals import PolicyApprover
 from orchestrator.planner import Planner
@@ -20,6 +22,7 @@ from protocol.models import (
     ToolDefinition,
     relative_path,
 )
+from protocol.ports import Observer
 
 
 class OfflineModel:
@@ -99,7 +102,9 @@ class FixtureWorker:
         pass
 
 
-def build_offline_service(case: EvaluationCase, root: Path) -> CollaborationService:
+def build_offline_service(
+    case: EvaluationCase, root: Path, *, observer: Observer | None = None
+) -> CollaborationService:
     agent_ids = {task.assignee for task in case.graph.tasks}
     agent_ids.update(
         child.assignee
@@ -116,6 +121,15 @@ def build_offline_service(case: EvaluationCase, root: Path) -> CollaborationServ
         AgentProfile(agent_id="planner", role="planner", system_prompt="Offline fixed graph only"),
     )
     scheduler = Scheduler(
-        FixtureWorker(root, case.steps), FileVerifier(), PolicyApprover(), root=root
+        FixtureWorker(root, case.steps),
+        FileVerifier(),
+        PolicyApprover(),
+        root=root,
+        observer=observer,
     )
     return CollaborationService(planner, scheduler, workers)
+
+
+def build_traced_offline_service(case: EvaluationCase, root: Path) -> TracedService:
+    trace = JsonlTrace(root / TRACE_FILENAME)
+    return TracedService(build_offline_service(case, root, observer=trace), trace)

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from harness.cases import load_suite
-from harness.offline import build_offline_service
+from harness.offline import build_traced_offline_service
 from harness.reporting import write_report
 from harness.runner import run_suite
 
@@ -41,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
             run_suite(
                 suite,
                 args.work_dir,
-                service_factory=build_offline_service,
+                service_factory=build_traced_offline_service,
                 case_timeout_sec=args.case_timeout,
             )
         )
