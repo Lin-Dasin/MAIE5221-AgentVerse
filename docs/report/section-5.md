@@ -1,9 +1,10 @@
-# Section 5 - Evaluation Harness and Offline Validation
+# Section 5 - Evaluation Harness and File Workflow Baseline
 
-Role D now implements deterministic file acceptance, fixed-case loading, serial
-batch execution, dual completion metrics and JSON export. Event persistence,
-replay, the conversational CLI and live end-to-end evaluation are still pending.
-The results below validate software behavior; they are not live-model scores.
+Role D implements deterministic file acceptance, fixed-case loading, serial
+batch execution, dual completion metrics, JSON export and per-run JSONL traces.
+The offline suite exercises expected successes and failures. A separate live
+file pilot measures three fixed task graphs with DeepSeek. SQLite event storage,
+replay and the conversational CLI remain planned.
 
 ## Current progress and execution
 
@@ -17,6 +18,7 @@ The results below validate software behavior; they are not live-model scores.
 | `harness/reporting.py` | UTF-8 JSON export, refusing to overwrite prior reports |
 | `harness/run.py` | Evaluation command entry point |
 | `harness/suites/offline-smoke.json` | Six data-only fixture cases |
+| `bus/trace.py` | JSONL scheduler events and tool-call metadata |
 
 From the synchronized Role D checkout, run:
 
@@ -66,12 +68,17 @@ and pass through the same acceptance checks. No live model client is invoked.
 - `duration_scope=fixed_graph` excludes autonomous planning because this version
   uses `run_graph()`. `token_scope=worker_only` must not be presented as complete
   system usage; these scripted cases have no model token consumption.
-- `trace_path` is explicitly `null` until the event/Trace implementation is added.
-  Artifact references are absolute paths on the local host; copy the associated
-  run directory when moving a report to another machine.
+- `trace_path` links the case report to its JSONL trace when tracing is enabled.
+  Events share the case `run_id` and include a sequence number and UTC timestamp.
+  Scheduler records cover node status, file handoffs, delegation and approval
+  decisions. Tool records include the agent, node, tool, outcome, elapsed time
+  and failure category. File contents and raw tool arguments are omitted.
+  A trace write failure is reported as a warning so the evaluation can finish.
+- Fresh reports use local paths. In the archived pilot report, trace and
+  artifact paths are relative to the directory containing the JSON.
 
 The top-level JSON retains the project-plan fields `run_id`, `suite`, `tasks`
-and `summary`, with explicit offline provenance and raw execution evidence added.
+and `summary`, with the run mode and raw execution evidence added.
 
 ## Component and contract
 
@@ -139,7 +146,7 @@ Latest validation on 2026-11-05, Windows with Python 3.11.5:
 
 | Check | Observed result |
 |---|---|
-| Combined A and D suite | 88 passed, 3 skipped |
+| Combined A and D suite, including Trace | 93 passed, 3 skipped |
 | Ruff | Passed |
 | Offline smoke batch | 3/6 goals and 6/10 nodes passed |
 
@@ -160,6 +167,59 @@ Two verifier tests exercise A's real scheduler:
    successful node and an `acceptance_failed` run outcome.
 
 No live model calls, API credentials or Docker containers are used by these tests.
+
+## Live file pilot
+
+On 2026-11-05, the requested model ID `deepseek-chat` ran three fixed task graphs
+with thinking disabled and memory disabled. The isolated checkout used Role D
+base `bf41a98` with the Trace code later committed as `e2b0b3d`, plus Role B's
+file-tool implementation at PR #11 head `bfc8681`. The run evaluates file
+creation, handoff and acceptance with the real model. Its timing covers fixed
+graph execution and its token count covers Worker calls.
+
+| Case | Goals passed | Nodes passed | Seconds | Worker tokens |
+|---|---:|---:|---:|---:|
+| Chinese status brief | 1/1 | 1/1 | 3.23 | 3,617 |
+| Two-node Chinese handoff | 1/1 | 2/2 | 6.40 | 8,985 |
+| Two-source summary | 1/1 | 3/3 | 8.58 | 13,434 |
+| **Batch** | **3/3** | **6/6** | **6.07 mean** | **26,036 total** |
+
+All nine recorded file calls succeeded. The handoff checks matched the three
+downstream reads to the files copied from A's archive. The batch ID is
+`77fd23d74a984c6a88580c890134e62a` and the suite SHA-256 is
+`fc86ef96371b1f96a57a07ca1f03d9b087043a2699b31d8d30261d4fc1f004cc`.
+
+The local archive is `results/baselines/live-file-dev-20261105/`. Its README
+describes how to find the report, traces, accepted Markdown and runnable source
+snapshot. The `results/` directory is ignored by Git.
+
+## Proposed Dev Set coverage
+
+The team plan calls for three cases in each of five categories, with first
+metrics due November 8. The five groups below are proposed for team review.
+The measured pilot covers F1–F3. The other rows are prepared scenarios and
+acceptance checks for the next integrations.
+
+| ID | Category | Task and acceptance | Status or dependency |
+|---|---|---|---|
+| F1 | File workflows | Create `status-brief.md` with the Chinese scope and owner sections. Verify required text in the accepted file. | Live fixed-graph pass |
+| F2 | File workflows | Read the handed-off `inputs/brief.md`. Verify the returned text matches the handoff and `final.md` contains the heading and source text. | Live fixed-graph pass |
+| F3 | File workflows | Read `inputs/metrics.md` and `inputs/checks.md`. Verify both reads and both source bodies in `summary.md`. | Live fixed-graph pass |
+| P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Pending live `run_goal` integration |
+| P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Pending live `run_goal` integration |
+| P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Pending live delegation case |
+| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Pending interactive callback |
+| H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Pending interactive callback and B tool integration |
+| H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Pending policy run with B tool integration |
+| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Pending B search adapter |
+| T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | Pending B isolation and test adapter |
+| T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | Pending B Git adapter and test repository authorization |
+| M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Pending C memory adapter |
+| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | Pending C retrieval and trace integration |
+| M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | Pending C adapter and comparable snapshots |
+
+For H3, the denial can satisfy the control's expected behavior while the raw
+goal outcome remains failed or blocked. Report these two observations separately.
 
 ## Reproduce this local validation
 
