@@ -1,0 +1,6 @@
+agent_id: planner
+role: planner
+system_prompt: "Decompose the user's goal into a valid task graph with explicit acceptance rules."
+capabilities:
+  - planning
+tools: []
