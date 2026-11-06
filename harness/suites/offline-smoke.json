@@ -1,0 +1,408 @@
+{
+  "suite": "offline-smoke",
+  "mode": "offline",
+  "cases": [
+    {
+      "task_id": "success",
+      "goal": "Generate a Markdown report with a conclusion.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/report.md"
+              },
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Fixture\n## Conclusion\n完成。\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "content-failure",
+      "goal": "Reject a report that omits the conclusion.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/report.md"
+              },
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Draft\n没有结论章节。\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "partial-completion",
+      "goal": "Count accepted upstream work even when the final report fails.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "outline",
+            "title": "Offline fixture: outline",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/outline.md"
+              }
+            ],
+            "outputs": [
+              "outputs/outline.md"
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "draft",
+            "title": "Offline fixture: draft",
+            "assignee": "writer",
+            "depends_on": [
+              "outline"
+            ],
+            "inputs": [
+              {
+                "from_task": "outline",
+                "path": "outline.md",
+                "as": "inputs/outline.md"
+              }
+            ],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/draft.md"
+              }
+            ],
+            "outputs": [
+              "outputs/draft.md"
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [
+              "draft"
+            ],
+            "inputs": [
+              {
+                "from_task": "draft",
+                "path": "draft.md",
+                "as": "inputs/draft.md"
+              }
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "outline": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/outline.md": "# Outline\n离线提纲。\n"
+            }
+          }
+        ],
+        "draft": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/draft.md": "# Draft\n离线草稿。\n"
+            }
+          }
+        ],
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Report\n最终内容仍缺少章节。\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "retry-success",
+      "goal": "Repair an invalid report after a real acceptance failure.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 1
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Draft\nNeeds revision.\n"
+            }
+          },
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Fixture\n## Conclusion\n完成。\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "delegation-success",
+      "goal": "Insert and verify a delegated child before the parent completes.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "report": [
+          {
+            "kind": "delegate",
+            "files": {
+              "outputs/draft.md": "# Parent draft\n"
+            },
+            "children": [
+              {
+                "task_id": "research",
+                "title": "Offline fixture: research",
+                "assignee": "researcher",
+                "depends_on": [],
+                "inputs": [],
+                "acceptance": [
+                  {
+                    "type": "file_exists",
+                    "path": "outputs/research.md"
+                  }
+                ],
+                "outputs": [
+                  "outputs/research.md"
+                ],
+                "max_retries": 0
+              }
+            ]
+          },
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Fixture\n## Conclusion\n完成。\n"
+            }
+          }
+        ],
+        "research": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/research.md": "# Research\n离线参考资料。\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "blocked-dependency",
+      "goal": "Keep failed and blocked nodes in the denominator.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "research",
+            "title": "Offline fixture: research",
+            "assignee": "researcher",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/research.md"
+              }
+            ],
+            "outputs": [
+              "outputs/research.md"
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [
+              "research"
+            ],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "file_exists",
+                "path": "outputs/report.md"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "research": [
+          {
+            "kind": "fail",
+            "failure_code": "tool_error",
+            "summary": "Synthetic file tool failure"
+          }
+        ],
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Fixture\n## Conclusion\n完成。\n"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
