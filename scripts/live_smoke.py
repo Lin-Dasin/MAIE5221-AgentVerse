@@ -240,6 +240,9 @@ async def run(goal: str, root: Path, max_steps: int, max_output_tokens: int) -> 
         return 1
 
     print(f"graph       : {len(graph.tasks)} task(s)")
+    graph_path = root / f"graph-{config.run_id}.json"
+    graph_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
+    print(f"graph file  : {graph_path}")
     try:
         result = await service.run_graph(graph, config)
     finally:
