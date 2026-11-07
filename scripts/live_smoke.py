@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -31,13 +32,106 @@ from bus.trace import TRACE_FILENAME, JsonlTrace, TracingToolExecutor
 from harness.verdict import FileVerifier
 from orchestrator.approvals import PolicyApprover
 from orchestrator.bootstrap import build_service
-from protocol.models import AcceptanceRule, RunConfig
-from runtime.client import DeepSeekClient
+from protocol.models import (
+    AcceptanceRule,
+    ChatMessage,
+    ModelResponse,
+    RunConfig,
+    ToolCall,
+    ToolDefinition,
+)
+from runtime.client import DeepSeekClient, ModelCallError
 from runtime.profiles import load_profiles
 from sandbox.executor import SandboxToolExecutor
 from tools.registry import build, definitions
 
 REQUIRED_ENV = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")
+
+
+class NoThinkingClient(DeepSeekClient):
+    """`DeepSeekClient` with thinking mode switched off.
+
+    Temporary shim until `runtime/client.py` owns this switch. DeepSeek enables
+    thinking by default, and once a request carries `tools`, every later turn
+    must echo `reasoning_content` back. `ChatMessage` has no such field, so an
+    agent's second model call would fail with HTTP 400. Disabling thinking
+    removes the requirement and keeps output tokens low.
+
+    Differences from the parent, both deliberate for a smoke test: no retry
+    loop, and non-200 responses include a slice of the body in the message.
+    """
+
+    async def complete(
+        self, messages: list[ChatMessage], tools: list[ToolDefinition], *, max_tokens: int
+    ) -> ModelResponse:
+        if max_tokens < 1:
+            raise ValueError("max_tokens must be positive")
+
+        wire_messages = []
+        for message in messages:
+            wire: dict = {"role": message.role, "content": message.content}
+            if message.tool_call_id:
+                wire["tool_call_id"] = message.tool_call_id
+            if message.tool_calls:
+                wire["tool_calls"] = [
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(call.arguments),
+                        },
+                    }
+                    for call in message.tool_calls
+                ]
+            wire_messages.append(wire)
+
+        payload: dict = {
+            "model": self.model,
+            "messages": wire_messages,
+            "max_tokens": max_tokens,
+            "stream": False,
+            "thinking": {"type": "disabled"},
+        }
+        if tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in tools
+            ]
+
+        response = await self.http.post(
+            self.url, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload
+        )
+        if response.status_code != 200:
+            detail = response.text[:300]
+            raise ModelCallError(f"Model request returned HTTP {response.status_code}: {detail}")
+
+        body = response.json()
+        choice = body["choices"][0]
+        if choice.get("finish_reason") == "length":
+            raise ModelCallError(
+                "Model output exceeded the response limit; raise --max-output-tokens"
+            )
+        message = choice["message"]
+        return ModelResponse(
+            content=message.get("content") or "",
+            tool_calls=[
+                ToolCall(
+                    call_id=call["id"],
+                    name=call["function"]["name"],
+                    arguments=json.loads(call["function"]["arguments"]),
+                )
+                for call in message.get("tool_calls") or []
+            ],
+            tokens=body.get("usage", {}).get("total_tokens", 0),
+        )
 
 DEFAULT_GOAL = (
     "Search the web for the official release date of Python 3.13 and write a short note "
@@ -99,7 +193,8 @@ async def preflight(client: DeepSeekClient) -> bool:
 
 
 async def run(goal: str, root: Path, max_steps: int, max_output_tokens: int) -> int:
-    client = DeepSeekClient.from_environment()
+    client = NoThinkingClient.from_environment()
+    print("client      : NoThinkingClient (thinking disabled, temporary shim)")
     registry = build()
     trace = JsonlTrace(root / TRACE_FILENAME)
     executor = TracingToolExecutor(SandboxToolExecutor(root, registry), trace)
