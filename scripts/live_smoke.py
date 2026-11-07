@@ -192,7 +192,9 @@ async def preflight(client: DeepSeekClient) -> bool:
     return True
 
 
-async def run(goal: str, root: Path, max_steps: int, max_output_tokens: int) -> int:
+async def run(
+    goal: str, root: Path, max_steps: int, max_output_tokens: int, max_task_tokens: int
+) -> int:
     client = NoThinkingClient.from_environment()
     print("client      : NoThinkingClient (thinking disabled, temporary shim)")
     registry = build()
@@ -207,12 +209,16 @@ async def run(goal: str, root: Path, max_steps: int, max_output_tokens: int) -> 
         executor=executor,
         verifier=FileVerifier(),
         approver=PolicyApprover(allowed_actions=frozenset({"file_write", "web_search"})),
+        observer=trace,
     )
 
     config = RunConfig(
         memory_enabled=False,
         write_memory=False,
         max_agent_steps=max_steps,
+        # Real research tasks spent 15-17k tokens per task, so the 16k default
+        # trips on ordinary variance. Raise it rather than shortening the task.
+        max_task_tokens=max_task_tokens,
         # Thinking mode is on by default and its tokens count as output, so the
         # default 2048 budget can be exhausted before the answer is written.
         max_output_tokens=max_output_tokens,
@@ -303,6 +309,12 @@ def main(argv: list[str] | None = None) -> int:
         default=4096,
         help="raise this if a step fails with 'exceeded the response limit'",
     )
+    parser.add_argument(
+        "--max-task-tokens",
+        type=int,
+        default=60000,
+        help="per-task token budget; the 16000 default is tight for real research",
+    )
     args = parser.parse_args(argv)
 
     check_environment()
@@ -310,7 +322,15 @@ def main(argv: list[str] | None = None) -> int:
     root.mkdir(parents=True, exist_ok=True)
 
     try:
-        return asyncio.run(run(args.goal, root, args.max_steps, args.max_output_tokens))
+        return asyncio.run(
+            run(
+                args.goal,
+                root,
+                args.max_steps,
+                args.max_output_tokens,
+                args.max_task_tokens,
+            )
+        )
     except KeyboardInterrupt:
         return 130
     except Exception as exc:  # noqa: BLE001 - a smoke script should print, not traceback
