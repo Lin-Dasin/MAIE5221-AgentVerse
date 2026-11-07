@@ -77,12 +77,20 @@ Where the values come from:
 
 Two DeepSeek details that cost real debugging time:
 
-- **The base URL must not end in `/v1`.** The client builds
-  `base_url + "/chat/completions"`, so `/v1` produces `/v1/chat/completions`,
-  which the current API does not serve.
+- **The model name matters more than the URL.** `deepseek-chat` and
+  `deepseek-reasoner` are no longer in the official model table; use
+  `deepseek-flash` (or `deepseek-v4-pro`). A stale name fails at request time,
+  not at import time.
+- **`/v1` is legacy but still served.** Verified by probing with a deliberately
+  invalid key: both `https://api.deepseek.com/chat/completions` and
+  `https://api.deepseek.com/v1/chat/completions` answer 401, so neither path is
+  missing. Use the bare host because that is the documented form, and keep it
+  consistent across machines.
 - **Thinking mode is on by default** and its tokens count as output. If a step
   fails with "Model output exceeded the response limit", raise `max_output_tokens`
-  rather than assuming a prompt problem.
+  rather than assuming a prompt problem. A request that carries `tools` must also
+  echo `reasoning_content` back on later turns, which the current `ChatMessage`
+  cannot do — so thinking must be disabled until that is handled.
 
 ```bat
 set LLM_API_KEY=sk-...                             :: cmd
