@@ -8,6 +8,7 @@ the layout; other documents point here instead of repeating it.
 | `overview.md` | Cross-module contracts and architecture reference | shared, changes via PR |
 | `project-plan.md` | Repository revision of the original team plan; course dates remain subject to official notices | shared, changes via PR |
 | `usage-and-integration.md` | Current usage, B/C/D adapter guide and first-integration checklist | A coordinates; B/C/D maintain their adapter details |
+| `local-setup.md` | Environment, per-member credentials and how variables reach the process | B maintains; changes via PR |
 | `changelog.md` | Dated changes to documentation, contracts and integration behavior | author of the change |
 | `contributions/` | One work plan per member, named `Role_<X>.md` | each member, own file only |
 | `report/` | Architecture document and report sections, named `section-<n>.md` | chapter owner; D merges |
