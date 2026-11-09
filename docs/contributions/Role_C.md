@@ -42,7 +42,7 @@ Build a stable, testable minimum version first; optimize only after the full loo
 
 ### 3.1 Data Storage
 
-- Each agent owns one memory file, for example `memory/data/<agent_id>.jsonl`.
+- Each agent owns `workspaces/<agent_id>/memory/<agent_id>.jsonl` under the shared run root. `memory/` at the repository root contains implementation code, not runtime records.
 - Each line is one JSON record, allowing appending, diffing, filtering, and replay.
 - A memory file may only be read or written by its corresponding agent memory module. Other agents must not read it directly.
 - Runtime-generated data must not be committed to Git. Commit only the schema, examples, and test fixtures.
@@ -69,7 +69,7 @@ Recommended record format:
 
 The first version should use keyword overlap and string similarity only. The expected memory volume is small, making this approach more stable and reproducible than adding a vector database.
 
-- Input: current agent ID, task title, task description, and task type.
+- Input: current agent ID and the shared `Task` object. Currently `Task` has `title`, acceptance and dependency fields but no separate `description` or `task_type`; any derived retrieval tags stay internal to C unless A adds a reviewed model field.
 - Filter: query only the current agent's private memory.
 - Ranking: prioritize matching task types, then rank by keyword or string similarity.
 - Output: return at most three relevant lessons, each length-limited to avoid consuming excessive model context.
@@ -77,39 +77,43 @@ The first version should use keyword overlap and string similarity only. The exp
 
 ### 3.3 Reflection Generation Strategy
 
-Reflection should be based on structured execution facts, rather than asking the model to improvise. Inputs include the task description, tool results, artifact paths, Critic acceptance result, defect list, and duration.
+Reflection should be based on structured execution facts. The current facade supplies
+`Task` and `TaskResult`: status, summary, outputs, timestamps, failure information,
+and optional `result.critique`. Raw tool traces and intermediate failed attempts
+are not included in that result; C/D must add a trace lookup adapter if those facts
+are required. Do not assume fields that the current model does not contain.
 
 The first version may generate reflections using a fixed template. If an LLM is used, the prompt must be fixed and versioned for experimental reproducibility. Persist only valuable, reusable conclusions to avoid storing noise and transient context.
 
 ## 4. External Interface Contract
 
-Role C implements the following interfaces. Exact fields follow the `protocol/` models finalized by Role A. Modules must not exchange untyped dictionaries.
+Role C implements the following async public facade from `protocol/ports.py`.
+Internal retrieval, record ranking and context formatting may remain separate
+functions; A calls only the facade. Exact fields follow `protocol/models.py`.
 
 ```python
-def retrieve_memory(agent_id: str, task: Task) -> list[MemoryRecord]:
-    """Return private memories most relevant to the current task."""
+from protocol.models import Task, TaskResult
 
-def build_memory_context(records: list[MemoryRecord]) -> str:
-    """Compress retrieved records into context that can be injected into an agent prompt."""
+async def retrieve(agent_id: str, task: Task) -> str:
+    """Return bounded prompt-ready private memory text, or an empty string."""
+    ...
 
-def write_reflection(
-    agent_id: str,
-    task: Task,
-    result: TaskResult,
-    critique: CriticResult,
-) -> MemoryRecord:
-    """Generate and persist a reflection from accepted execution facts."""
+async def reflect(task: Task, result: TaskResult) -> None:
+    """Persist experience for result.agent_id; result.critique may be None."""
+    ...
 ```
 
 ### Handoff with Role A
 
-- Role A calls `retrieve_memory()` and `build_memory_context()` before the agent's main execution loop begins.
-- After a task ends, retries are exhausted, or the Critic reaches a final result, Role A supplies structured `TaskResult` and `CriticResult` objects to Role C.
+- Role A awaits `memory.retrieve(task.assignee, task)` before a Worker's attempt begins, when `memory_enabled` is true.
+- At terminal task states, A awaits `memory.reflect(task, result)` when `write_memory` is true. Read the optional verdict from `result.critique`; blocked or early-failed tasks may have no verdict. Match `task.assignee` to `result.agent_id`.
+- Retrieval and reflection use the same adapter/root supplied to `build_service()`. No history returns an empty string; malformed stored records should be skipped with a diagnostic.
+- Planner currently accepts externally prepared `memory_context`; automatic Planner retrieval/reflection and a separate Critic agent lifecycle remain A/C work. Do not mark every agent's memory complete based only on Worker tests.
 - Role C does not modify scheduling rules. Role A arbitrates interface or field changes and must update the models in `protocol/` first.
 
 ### Handoff with Role D
 
-- Role D's harness passes the experiment mode: `memory_enabled=true/false`.
+- Role D's harness passes `RunConfig.memory_enabled` for retrieval/injection and `RunConfig.write_memory` independently for terminal writes. Record both flags and the starting memory snapshot. A frozen-memory comparison can use `write_memory=false` in both groups; an evolving-memory comparison needs separate reproducible stores.
 - Role D produces standardized task-level results: task status, duration, acceptance counts, failure reason, token count, and trace path.
 - Role C analyzes both groups and provides Section 4 metrics, conclusions, and chart data to Role D. Role D standardizes presentation only and must not rewrite the experimental argument.
 
@@ -126,7 +130,7 @@ Objective: complete the data design and minimal loop.
 
 - Confirm minimum `Task`, `TaskResult`, and `CriticResult` fields with Role A.
 - Define the `MemoryRecord` Pydantic model and JSONL examples.
-- Define a failure-category taxonomy, for example: `tool_error`, `timeout`, `invalid_output`, `missing_input`, `hitl_blocked`, and `model_reasoning_error`.
+- Import `FailureCode` from `protocol.models` for failure categories; do not define a competing enumeration.
 - Use mock data to test the write -> retrieve -> context-injection loop.
 
 Exit criteria: interface signatures, sample data, tests, and profile configuration examples are merged into `develop`.
@@ -193,6 +197,7 @@ The experiment must be reproducible and fair:
 3. Record both completion-rate definitions, average duration, token consumption, and failure-reason distribution. Do not select only cases favorable to memory.
 4. If there is no meaningful improvement, report that honestly and analyze likely causes, such as irrelevant retrieval, tasks lacking recurring patterns, or model variation.
 5. Do not claim that memory improves performance without raw run records, frozen configuration, and corresponding traces.
+6. Reset task `inputs/` and `outputs/` between attempts, but preserve `memory/` during normal runs. Experimental memory resets or snapshots must be deliberate and recorded by C/D.
 
 ## 7. Branch and Commit Guidance
 

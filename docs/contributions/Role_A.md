@@ -21,7 +21,7 @@
 | Worker sub-delegation | Receive subtask requests, validate and insert them into the task graph through the scheduler, and establish parent-child relationships, waiting behavior, and result return paths | Limit sub-delegation depth to 1 and allow at most 2 subtasks per parent task; route every subtask through normal execution and acceptance checks and include it in the metrics |
 | Agent execution loop | Connect incoming messages, memory retrieval, model decisions, tool requests, structured reporting, Critic acceptance checks, and post-task reflection; centralize model calls | Run Planner, Worker, and Critic agents according to their respective configurations; call only DeepSeek or HKGAI endpoints and support call budgets, timeouts, retries, and error reporting |
 | HITL gate | Define interchangeable interactive and policy-based approvers; handle clarification, permission, and correction requests, and record decisions and assumptions | Allow interactive execution to pause and resume; in unattended mode, approve, reject, or apply permitted conservative defaults according to predefined rules without waiting indefinitely for human input |
-| Acceptance checks and artifact handoffs | Integrate pluggable acceptance strategies; distribute inputs before task execution, archive outputs after acceptance, and return defect lists to Workers for bounded rework when acceptance fails | Have the orchestrator transfer copies between `artifacts/<task_id>/` and the assigned Agent’s workspace; do not make unaccepted outputs available to downstream tasks |
+| Acceptance checks and artifact handoffs | Integrate pluggable acceptance strategies; distribute inputs before task execution, archive outputs after acceptance, and return defect lists to Workers for bounded rework when acceptance fails | Have the orchestrator transfer copies between `artifacts/<run_id>/<task_id>/` and the assigned Agent’s workspace; do not make unaccepted outputs available to downstream tasks |
 | Message routing and observable events | Align private, group, and internal message routing with D; emit events for task assignment, sub-delegation, HITL, acceptance checks, and artifact handoffs | Keep private chats visible only to the relevant human and Agent; show role claims and delegation summaries in group chats; do not broadcast raw internal tool messages to group chats |
 
 - Scope of This Work: Focus on A’s three code directories, core contract definition, the first end-to-end integration in W10, architectural fixes, and demonstration workflow design. In W8, coordinate repository setup, basic CI, and runtime environment alignment. After the W10, W12, and W13 milestones are met, open PRs from `develop` to `main`. From W11 onward, B shares integration troubleshooting and D owns metric regression checks, while A focuses on orchestration defects, interface decisions, and architecture decisions.
@@ -43,7 +43,7 @@ Additional arrangements:
 
 - If a test set has not yet been released, continue integration and regression work using the dev set maintained by D. Do not treat estimated release dates as course commitments or label dev set scores as formal test results. Run the official evaluation as required after the relevant test set is released.
 - Establish the main architecture baseline by the end of W11. Focus W12 on necessary fixes and hardening, and W13 on reproducible demonstrations and finalization. Avoid major interface changes close to submission.
-- Each Monday, record actual completed work, validation results, and blockers in `docs/weekly/`. Follow team guidelines by planning at least 3 substantive commits per week, promptly pushing completed changes each day, and integrating into `develop` through a PR at least every 3 days. Commit content, authorship, and timestamps must reflect the actual work performed.
+- Record actual completed work, validation results, and blockers in PR descriptions or a tracking issue, following `docs/README.md`; do not create `docs/weekly/`. Follow team guidelines by planning at least 3 substantive commits per week, promptly pushing completed changes each day, and integrating into `develop` through a PR at least every 3 days. Commit content, authorship, and timestamps must reflect the actual work performed.
 - Deliver a review-ready Section 2 in W13. Finalize it in W14 or later according to the official deadline, and support D in assembling the report and commit-history screenshots.
 
 ## Deliverables
@@ -52,7 +52,7 @@ The paths below indicate planned code and documentation locations. Specific file
 
 - Code: Cross-module data models and validation in `protocol/`; the planner, dependency scheduler, sub-delegation handling, HITL gate, acceptance workflow, and artifact handoffs in `orchestrator/`; the Agent execution loop and centralized model client in `runtime/`; and basic CI configuration and interface examples within A’s scope. Submit code through `Role_A` and integrate it through reviewed PRs.
 - Tests: Tests under `tests/` owned by A for model validation, dependency ordering, state transitions, retry limits, sub-delegation, HITL, and artifact handoffs; integration tests completed jointly with B/C/D for text tasks, code tasks, and unattended batch execution. Use model-interface test doubles to support stable unit tests, and retain records of integration validation against actual permitted endpoints.
-- Documentation: The architecture overview and Section 2, “Routing and Collaboration Logic”; task graph, state-transition, HITL, and cross-module interface specifications; orchestration failure analysis and fix records; the W13 demonstration script; weekly progress reports; and an index of personal commits/PRs. Align the message-bus subsection of Section 2 with D for inclusion in the consolidated report. All written documentation must use Markdown or plain text.
+- Documentation: The architecture overview and Section 2, “Routing and Collaboration Logic”; task graph, state-transition, HITL, and cross-module interface specifications; orchestration failure analysis and fix records; the W13 demonstration script; progress in PRs/tracking issues; and an index of personal commits/PRs. Record contract and documentation changes in `docs/changelog.md`. Align the message-bus subsection of Section 2 with D. All written documentation must use Markdown or plain text.
 
 ## Collaboration and Dependencies
 
@@ -106,5 +106,15 @@ Collaboration follows the `Role_A → develop → main` PR workflow, requires at
 - [ ] **Documentation complete**: Core contracts, state transitions, the architecture overview, Section 2, the demonstration script, and personal progress records are complete and consistent with the actual code.
 - [ ] **Integration with other modules complete**: End-to-end validation passes for B’s tools/sandboxes, C’s memory/profiles, and D’s message bus/CLI/harness; private/group chats and visibility rules meet the agreed requirements.
 - [ ] **Evaluation data can be verified**: Establish the dev set baseline by November 8; retain complete records for goal completion rate, subtask completion rate including dynamic child nodes, and execution time; retries do not increase the count of logical tasks, and omitted task states do not inflate results.
-- [ ] **Course constraints satisfied**: Runtime model calls use only DeepSeek or HKGAI services; written documentation uses Markdown/plain text only; git tools operate on a separate sandbox repository; Agents execute in the isolated environments provided by B.
-- [ ] **Collaboration and delivery evidence complete**: Personal contributions can be verified against genuine commits, PRs, test records, and weekly reports; complete the W13 demonstration and support report finalization and screenshot collection in W14 and beyond.
+- [ ] **Course and team constraints satisfied**: Runtime model calls use only DeepSeek or HKGAI services; written documentation uses Markdown/plain text only; git tools operate on a separate sandbox repository as agreed by the team; Agents execute in the isolated environments provided by B.
+- [ ] **Collaboration and delivery evidence complete**: Personal contributions can be verified against genuine commits, PRs, test records, and progress issues; complete the W13 demonstration and support report finalization and screenshot collection in W14 and beyond.
+
+## Current Integration Reference
+
+Use [the integration guide](../usage-and-integration.md) and the exact signatures
+in `protocol/ports.py`. A provides `orchestrator.bootstrap.build_service()` for D
+to assemble the service with B/C/D adapters. The first live integration remains
+pending. A must still coordinate chat entry points, Planner memory and the Critic
+agent lifecycle; current Worker hooks and deterministic verdicts do not complete
+those requirements. Weekly progress evidence lives in PRs/tracking issues, not a
+separate weekly-report directory.

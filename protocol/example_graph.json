@@ -1,0 +1,40 @@
+{
+  "tasks": [
+    {
+      "task_id": "collect",
+      "title": "Collect official documentation links for three Python CLI libraries",
+      "assignee": "researcher",
+      "parent_task": null,
+      "depth": 0,
+      "depends_on": [],
+      "inputs": [],
+      "acceptance": [
+        {"type": "file_exists", "path": "outputs/sources.md"},
+        {"type": "text_contains", "path": "outputs/sources.md", "text": "Sources"}
+      ],
+      "outputs": ["outputs/sources.md"],
+      "max_retries": 2
+    },
+    {
+      "task_id": "compare",
+      "title": "Write a sourced Markdown comparison using the collected documentation",
+      "assignee": "writer",
+      "parent_task": null,
+      "depth": 0,
+      "depends_on": ["collect"],
+      "inputs": [{"from_task": "collect", "path": "sources.md", "as": "inputs/sources.md"}],
+      "acceptance": [
+        {"type": "file_exists", "path": "outputs/comparison.md"},
+        {"type": "text_contains", "path": "outputs/comparison.md", "text": "Sources"}
+      ],
+      "outputs": ["outputs/comparison.md"],
+      "max_retries": 2
+    }
+  ],
+  "final_task_id": "compare",
+  "goal_acceptance": [
+    {"type": "file_exists", "path": "comparison.md"},
+    {"type": "text_contains", "path": "comparison.md", "text": "Sources"}
+  ],
+  "summary": "The researcher gathers sources; the writer produces the final comparison."
+}
