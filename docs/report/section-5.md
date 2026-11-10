@@ -3,8 +3,9 @@
 Role D implements deterministic file acceptance, fixed-case loading, serial
 batch execution, dual completion metrics, JSON export and per-run JSONL traces.
 The offline suite exercises expected successes and failures. A separate live
-file pilot measures three fixed task graphs with DeepSeek. SQLite event storage,
-replay and the conversational CLI remain planned.
+file pilot measures three fixed task graphs with DeepSeek. An offline terminal
+demo exercises human clarification through A's agent loop. SQLite event storage,
+replay and the full conversational CLI remain planned.
 
 ## Current progress and execution
 
@@ -202,6 +203,27 @@ For a new live run, set `LLM_MODEL=deepseek-flash` in the local environment
 file. This is the model ID listed in the current
 [DeepSeek model table](https://api-docs.deepseek.com/quick_start/pricing/).
 
+## Terminal clarification pilot
+
+The H1 entry point is `python -m ui.h1_demo --timeout 60`. It uses a scripted
+model and a fixed report-writing fixture with A's real runtime and scheduler.
+The agent requests a title through `ask_human`. D's `TerminalClarification`
+callback supplies A's `InteractiveApprover` with a decision bearing the original
+request ID. The task resumes and the final archive must begin with the chosen
+title. Each run gets its own directory under `results/h1-demo/`, containing an
+evaluation JSON, JSONL trace and accepted Markdown when successful.
+
+Automated stdin checks on 2026-11-10 passed the answer, empty-input and timeout
+paths. The answer run passed 1/1 goals and 1/1 nodes. Empty input and timeout
+produced blocked task outcomes and no report. Trace metadata records the wait,
+decision and final state. The title remains in the local evaluation and report.
+The local evidence is `results/baselines/h1-cli-20261110/verified/`.
+
+The callback reads from a duplicate stdin stream so an unanswered question can
+time out without holding interpreter shutdown. Late replies are discarded. A
+session declines further questions until its pending terminal read completes.
+Fifteen focused tests cover terminal behavior and pause/resume integration.
+
 ## Proposed Dev Set coverage
 
 The team plan calls for three cases in each of five categories, with first
@@ -217,7 +239,7 @@ acceptance checks for the next integrations.
 | P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Pending live `run_goal` integration |
 | P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Pending live `run_goal` integration |
 | P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Pending live delegation case |
-| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Pending interactive callback |
+| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Offline terminal demo and automated stdin checks passed. |
 | H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Pending interactive callback and B tool integration |
 | H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Pending policy run with B tool integration |
 | T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Pending B search adapter |
