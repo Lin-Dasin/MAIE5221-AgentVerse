@@ -170,12 +170,17 @@ No live model calls, API credentials or Docker containers are used by these test
 
 ## Live file pilot
 
-On 2026-11-05, the requested model ID `deepseek-chat` ran three fixed task graphs
-with thinking disabled and memory disabled. The isolated checkout used Role D
-base `bf41a98` with the Trace code later committed as `e2b0b3d`, plus Role B's
-file-tool implementation at PR #11 head `bfc8681`. The run evaluates file
-creation, handoff and acceptance with the real model. Its timing covers fixed
-graph execution and its token count covers Worker calls.
+On 2026-11-05, the live pilot ran three fixed task graphs with `deepseek-chat`
+as the requested model ID and with thinking and memory disabled. The isolated
+checkout used Role D base `bf41a98` with the Trace code later committed as
+`e2b0b3d`, plus Role B's file-tool implementation at PR #11 head `bfc8681`.
+The run evaluates file creation, handoff and acceptance with the real model.
+Its timing covers fixed graph execution and its token count covers Worker calls.
+
+The archived report's `model` field comes from the request configuration
+(`client.model`). The client retained response content, tool calls and token
+usage. The provider-returned model ID and historical serving backend are
+unknown from this evidence.
 
 | Case | Goals passed | Nodes passed | Seconds | Worker tokens |
 |---|---:|---:|---:|---:|
@@ -192,6 +197,10 @@ downstream reads to the files copied from A's archive. The batch ID is
 The local archive is `results/baselines/live-file-dev-20261105/`. Its README
 describes how to find the report, traces, accepted Markdown and runnable source
 snapshot. The `results/` directory is ignored by Git.
+
+For a new live run, set `LLM_MODEL=deepseek-flash` in the local environment
+file. This is the model ID listed in the current
+[DeepSeek model table](https://api-docs.deepseek.com/quick_start/pricing/).
 
 ## Proposed Dev Set coverage
 
