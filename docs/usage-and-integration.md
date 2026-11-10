@@ -1,27 +1,28 @@
 # Usage and B/C/D Integration Guide
 
-Updated: 2026-10-29. Scope: the current local Role A implementation and the next steps for team integration.
+Updated: 2026-11-11. Scope: the current Role A implementation and integration contracts.
 
 This guide distinguishes existing code, implementations required from teammates, and follow-up development involving multiple roles. Passing local tests does not establish that real APIs, containers, tools or official evaluation are complete. The current alignment still requires normal PR review.
 
 ## 1. What Is Available Now
 
-The current implementation provides the orchestration core: planning tasks, assigning roles, executing dependencies, pausing for approval, inserting subtasks and handing off files after acceptance. Test doubles can verify these workflows. The B/C/D modules for real search, file operations, code execution, GitHub, persistent memory and the chat interface have not yet been integrated.
+The implementation provides planning, dependency execution, approval pauses, sub-delegation and accepted artifact handoffs. The repository now also contains B's file/search/host Python tools, C's JSONL memory and profiles, and D's file verifier, JSONL traces and offline harness. Container isolation, Git tools, conversational UI and complete live evaluation remain integration work. The smoke script assembles real file/search/verifier/trace adapters with memory disabled.
 
 | Module | Existing functionality | Boundaries and follow-up work |
 | --- | --- | --- |
 | `protocol/models.py` | Defines Task, TaskGraph, input references, acceptance rules, tool calls/results, agent profiles, execution results, HITL and budgets | Everyone reuses these models; A coordinates new fields |
 | `protocol/ports.py` | Defines async interfaces for tools, memory, verification, approval, events and model calls | Call contracts, not B/C/D implementations |
-| `orchestrator/planner.py` | Generates task graphs, collects Worker bids and performs bounded repair of invalid JSON | Planner memory is currently supplied externally; real-model behavior remains unverified |
+| `orchestrator/planner.py` | Generates task graphs, collects Worker bids and repairs schema/contract errors within bounded calls | Planner memory is supplied externally; dataset goal rules remain authoritative |
+| `orchestrator/preflight.py` | Checks published input paths, goal file paths, configured rule support and registered Worker IDs | Checks declarations before execution; D still verifies actual files and content |
 | `orchestrator/scheduler.py` | Serial dependency scheduling, bounded retries, failure propagation, sub-delegation and resumption | Only one run can use a shared root at a time; shared-workspace concurrency is not supported |
 | `orchestrator/approvals.py` | Human callback approval and predefined policy approval | D provides the UI callback; policy mode does not replace a human demonstration |
 | `orchestrator/artifacts.py` | Distributes accepted inputs, publishes artifacts and saves/restores suspended parent inputs/outputs | Host-side file handoffs; B implements container and mount isolation |
 | `orchestrator/bootstrap.py` | `build_service()` assembles explicitly supplied adapters into a service | Does not substitute for missing modules, start containers or load `.env` automatically |
 | `orchestrator/service.py` | `run_goal()` accepts natural-language goals; `run_graph()` accepts predefined task graphs | The former exercises autonomous planning; the latter helps diagnose deterministic integration first |
 | `runtime/agent.py` | Worker model/tool loop, memory retrieval, sub-delegation and human-response handling | Currently executes only `role="worker"`; not a general chat entry point for every role |
-| `runtime/client.py` | Requests to the official DeepSeek endpoint, tool-protocol translation and bounded retries | Requires a real key; an HKGAI adapter is not implemented |
-| `runtime/profiles.py` | Loads and validates `profiles/*.yaml` | C supplies YAML contents; the directory currently contains only a placeholder |
-| `tests/` | Offline checks using simulated models, tools, memory and verifiers | Test doubles are for testing only, not formal performance results |
+| `runtime/client.py` | Official DeepSeek requests, configurable thinking, reasoning replay and bounded retries | Shared by smoke probes, Planner and Workers; HKGAI needs a separate adapter |
+| `runtime/profiles.py` | Loads and validates `profiles/*.yaml` | C supplies Planner, researcher and writer profiles |
+| `tests/` | Offline checks using simulated models and both real local adapters and explicit test doubles | These are regression checks, not real-model performance measurements |
 
 `Verifier.check()` is currently a deterministic acceptance component. The planned independent Critic Agent, its conversations and its memory have not been implemented. The presence of `role="critic"` in a model does not establish that this functionality exists.
 
@@ -47,16 +48,63 @@ python -m pytest -q tests/test_runtime.py::test_goal_to_artifact_with_memory_and
 
 It assembles A's modules through the actual `build_service()` function, but model responses, tools, memory and verification remain explicitly labeled test doubles. This verifies interface connections and control flow, not network integration or goal completion by real agents.
 
-**The following two application entry points are not yet implemented and cannot currently be used as startup commands:**
+The offline harness is available with its fixed scripted suite:
+
+```bash
+python -m harness.run --suite offline-smoke --mock \
+  --work-dir results/offline-smoke/work --output results/offline-smoke/report.json
+```
+
+The six cases deliberately include failures: the expected result is 3/6 goals and
+6/10 subtasks. These fixture numbers are not model performance. The following
+commands still do not provide a conversational CLI or live dev-set evaluation:
 
 ```text
 python -m ui.cli
 python -m harness.run --suite dev
 ```
 
-D will enable them after implementing the corresponding modules. Both entry points should use `build_service()`.
+D owns those entry points; application assembly should use `build_service()`.
 
 Before real calls, D's application must load a local `.env` or read exported `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` variables. Copying `.env.example` alone does not load them. B's adapters read search and Git configuration. Close the model client and flush logs when the application exits.
+
+### Shared Model Client and Live Smoke Test
+
+`DeepSeekClient(..., thinking="disabled")` is the default. The environment factory
+reads `LLM_THINKING=disabled|enabled`; any other value fails before a request.
+Every request sends the chosen mode explicitly. `ChatMessage` and `ModelResponse`
+have an optional `reasoning_content` field. The Runtime preserves it across tool
+calls, delegation and approval pauses; the enabled client sends it back on
+assistant messages. Disabled mode omits it from outgoing messages. This provider
+field is conversation state, not a task summary or a new trace format.
+
+All calls retain the bounded transient retry policy (429, 5xx, network errors and
+timeouts). Authentication/request errors fail immediately. The smoke probe uses
+this same client, closes it on every exit and reports errors without raw HTTP
+response bodies. There is no separate `NoThinkingClient` anymore.
+
+After exporting the required variables as described in [local setup](local-setup.md):
+
+```bash
+export LLM_THINKING=disabled
+python -m scripts.live_smoke --goal \
+  "Do not search. Write outputs/notes.md with heading '# Local smoke test'." \
+  --root results/live-file-smoke
+```
+
+The default goal uses web search and additionally needs `SEARCH_API_KEY`:
+
+```bash
+python -m scripts.live_smoke --root results/live-search-smoke
+```
+
+Run from the repository root. These commands make paid real API calls; the
+regression suite does not. The script calls `run_goal()` so timing includes
+planning, saves the returned graph and JSONL trace, and checks `notes.md` in the
+final archive. Workers still write `outputs/notes.md`. Its verdict checks file
+existence only, and memory is disabled. A successful smoke run does not establish
+answer accuracy or formal dataset performance. No live call was made for the
+2026-11-11 changes.
 
 ## 3. Shared Interfaces and Paths
 
@@ -104,6 +152,42 @@ For example, an upstream task declares `outputs/brief.md`, archived as `artifact
 ```
 
 The downstream task's `depends_on` must include `research`. Task acceptance paths are workspace-relative; top-level goal acceptance paths are relative to the final task's archive, so they normally omit `outputs/`.
+
+### 3.3 Plan Preflight
+
+`build_service()` supplies one `PlanPreflight` instance to Planner and Scheduler.
+It validates schema/budgets, registered Worker assignments, each input's exact
+match to an upstream published output, goal file checks against final published
+outputs, and the configured acceptance-rule types. `archive_path()` is shared
+with publication so the mapping removes exactly one leading `outputs/`.
+
+| Declaration | Correct path for a task producing `outputs/notes.md` |
+| --- | --- |
+| Task output and task acceptance | `outputs/notes.md` |
+| Downstream `InputRef.path` | `notes.md` |
+| Final goal acceptance | `notes.md` |
+
+Planner drafts and negotiated plans both undergo preflight. A rejected candidate
+gets a diagnostic and at most one repair per generation, still bounded by
+`max_planning_calls` and the token budget. Dataset rules are never silently
+rewritten or weakened. Unsupported externally supplied goal rules fail before a
+model call. `run_goal()` returns a failure record and retains useful plan-error
+details; `run_graph()` raises for invalid contracts before leasing a workspace or
+calling a Worker. Dynamic children are checked before insertion and parent
+suspension; a bad request fails the parent with `invalid_output`.
+
+The optional `build_service(supported_acceptance_types=...)` argument defaults to
+`{"file_exists", "text_contains"}`, matching D's current `FileVerifier`. It is an
+explicit declaration by the application about the supplied verifier, not a new
+evaluator. Enable `pytest_passes` only after B/D supply its isolated execution
+implementation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
+only configured `worker_ids` enable its registry check. Production callers should
+use `build_service()` to keep both stages consistent.
+
+Preflight does not execute tools, test file existence/content, infer semantic
+capability matches, or replace D's acceptance decisions. Paths remain exact,
+case-sensitive file declarations; supported future non-file rules retain their
+adapter-specific path semantics.
 
 Use a new `run_id` for every run. Identifier permits only letters, digits, underscores and hyphens; do not use a timestamp containing colons directly. The default `RunConfig()` generates a valid ID.
 
@@ -178,11 +262,11 @@ Control the model, tasks, prompts, acceptance rules and budgets, and record both
 
 ### Real Verifier
 
-Implement the single rule interpreter in `harness/verdict.py`, conforming to `Verifier.check()`:
+The single rule interpreter in `harness/verdict.py` conforms to `Verifier.check()`:
 
 - `file_exists`: check the specified artifact.
 - `text_contains`: check for the specified nonempty text.
-- `pytest_passes`: run the relevant tests through B's isolated executor and inspect the outcome.
+- `pytest_passes`: still requires B's isolated executor integration; default plan preflight rejects it before execution.
 
 Do not use the default-passing `StubVerifier` from `tests/helpers.py` as the real verifier. File existence or a Sources section does not establish factual accuracy. For richer official criteria, D/A must extend the rule model and evaluator implementation.
 

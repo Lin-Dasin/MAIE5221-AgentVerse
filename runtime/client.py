@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -23,6 +24,7 @@ class DeepSeekClient:
         model: str,
         timeout_sec: float = 45,
         max_retries: int = 2,
+        thinking: Literal["disabled", "enabled"] = "disabled",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         parsed = urlparse(base_url)
@@ -41,10 +43,13 @@ class DeepSeekClient:
             raise ValueError("LLM_API_KEY and LLM_MODEL are required")
         if not 0 <= max_retries <= 5 or timeout_sec <= 0:
             raise ValueError("invalid model retry or timeout configuration")
+        if thinking not in {"disabled", "enabled"}:
+            raise ValueError("LLM_THINKING must be disabled or enabled")
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
+        self.thinking = thinking
         self.http = httpx.AsyncClient(timeout=timeout_sec, transport=transport)
 
     @classmethod
@@ -56,6 +61,7 @@ class DeepSeekClient:
             base_url=os.environ["LLM_BASE_URL"],
             api_key=os.environ["LLM_API_KEY"],
             model=os.environ["LLM_MODEL"],
+            thinking=os.environ.get("LLM_THINKING", "disabled"),
         )
 
     async def aclose(self) -> None:
@@ -69,6 +75,12 @@ class DeepSeekClient:
         wire_messages = []
         for message in messages:
             wire: dict = {"role": message.role, "content": message.content}
+            if (
+                self.thinking == "enabled"
+                and message.role == "assistant"
+                and message.reasoning_content is not None
+            ):
+                wire["reasoning_content"] = message.reasoning_content
             if message.tool_call_id:
                 wire["tool_call_id"] = message.tool_call_id
             if message.tool_calls:
@@ -89,6 +101,7 @@ class DeepSeekClient:
             "messages": wire_messages,
             "max_tokens": max_tokens,
             "stream": False,
+            "thinking": {"type": self.thinking},
         }
         if tools:
             payload["tools"] = [
@@ -120,6 +133,7 @@ class DeepSeekClient:
                         message = choice["message"]
                         return ModelResponse(
                             content=message.get("content") or "",
+                            reasoning_content=message.get("reasoning_content"),
                             tool_calls=[
                                 ToolCall(
                                     call_id=call["id"],

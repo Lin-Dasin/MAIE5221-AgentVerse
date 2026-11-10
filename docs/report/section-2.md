@@ -1,6 +1,6 @@
 # Section 2 — Routing and Collaboration Logic
 
-Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-10-29; team review pending.
+Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-11-11; team review pending.
 
 ## Status and scope
 
@@ -14,21 +14,26 @@ Implemented:
 
 - Shared Pydantic models with graph, dependency, result and configuration validation.
 - Bounded planning, specialist bids, one final negotiation step and schema repair.
+- Pre-execution validation of published input paths, final artifact paths and
+  configured verifier capabilities, shared by planning and scheduling.
 - Serial dependency scheduling, finite task retries and explicit terminal states.
 - Worker sub-delegation through the scheduler, with depth 1 and at most two children.
 - Interactive and policy-driven HITL; decisions are stored in task results.
 - A resumable Agent loop with role/tool configuration, memory hooks and model budgets.
 - Host-side artifact handoffs, per-run archives and suspended-parent workspace restoration.
-- A DeepSeek HTTP client with bounded transient retries and no provider fallback.
+- One DeepSeek HTTP client with configurable thinking, multi-turn reasoning replay,
+  bounded transient retries and no provider fallback.
 - Explicit adapter assembly through `orchestrator.bootstrap.build_service()`.
 - Typed integration ports, editable package installation, CI dependency installation,
   and offline tests including a synthetic goal-to-artifact workflow.
 
-Production adapters still required: B's tools and container lifecycle, C's profiles
-and memory implementation, D's verdicts, bus/event mapping, CLI and harness. Live
-DeepSeek calls have not been verified without a team key. The client does not
-implement HKGAI's unconfirmed API. Container isolation remains B's responsibility;
-the host-side handoff code is not a replacement for containers.
+The repository includes B's file/search/host Python tools, C's profiles and JSONL
+memory, and D's file verdicts, JSONL traces and offline harness. Remaining gaps
+include containers, Git tools, conversational routing/UI and full live evaluation.
+The 2026-11-11 regressions use mocked HTTP, including a smoke-script workflow with
+real file/trace/verifier adapters; no new live-provider result is claimed. The
+client does not implement HKGAI. Container isolation remains B's responsibility;
+host-side handoffs and Python subprocess execution do not provide it.
 
 ## Code map
 
@@ -38,6 +43,7 @@ the host-side handoff code is not a replacement for containers.
 | `protocol/ports.py` | B/C/D adapter signatures; no tool, memory, evaluator or event implementation |
 | `protocol/example_graph.json` | Two-task contract example; not an evaluation result |
 | `orchestrator/planner.py` | Planner output validation, specialist bids and bounded plan revision |
+| `orchestrator/preflight.py` | Shared executable-plan checks before draft acceptance, run startup and child insertion |
 | `orchestrator/scheduler.py` | Dependency ordering, task retries, delegation, approvals and finalization |
 | `orchestrator/artifacts.py` | Accepted-output publication, input copies and suspended-parent snapshots |
 | `orchestrator/approvals.py` | Configured unattended decisions and bounded interactive callbacks |
@@ -59,7 +65,10 @@ The following details are implementation proposals for B/C/D review:
 1. `TaskGraph` includes `tasks`, `final_task_id`, `goal_acceptance` and `summary`.
    Planner-created nodes have depth 0. Dynamic child nodes are added by A only.
 2. `AcceptanceRule` uses `type`, `path` and optional `text`. D implements
-   `file_exists`, `text_contains` and `pytest_passes` in its single evaluator.
+   `file_exists` and `text_contains` in its current evaluator; `pytest_passes`
+   remains unavailable until B/D integrate isolated test execution. The shared
+   preflight defaults to the two implemented types; the application explicitly
+   declares additional support through `build_service(supported_acceptance_types=...)`.
    Meaningful content requirements need corresponding D-owned checks; a file
    presence check is not a substitute for them.
    For benchmarks, D passes the dataset's fixed criteria through
@@ -97,6 +106,15 @@ D to display in the group chat. No tools run during planning. A caller may suppl
 C's planner-specific memory through `memory_context`; this text is ignored when
 memory is disabled. Automatic planner-memory retrieval remains an integration
 point for C; worker-memory retrieval is implemented in the runtime.
+
+`PlanPreflight` checks both draft and negotiated graphs. Inputs must name exact
+declared upstream outputs after the archive mapping, and goal file checks must
+name published outputs of the final task. Unsupported externally supplied goal
+rules fail before a model call. A generated invalid graph receives its specific
+diagnostic and one bounded repair opportunity per generation. Fixed graphs are
+checked before workspace creation; dynamic children are checked before insertion
+or parent suspension. Dataset criteria are not rewritten. These declaration
+checks do not evaluate actual file content or semantic Worker capabilities.
 
 The scheduler uses this state flow:
 
@@ -206,6 +224,15 @@ be false; the default config enables both flags.
 The current DeepSeek adapter requires exported or application-loaded
 `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL`; HKGAI needs a separate adapter.
 
+`LLM_THINKING` accepts `disabled` (default) or `enabled`. The optional shared
+`reasoning_content` field preserves provider conversation state through tool/HITL
+turns and Planner repair; enabled requests replay it on assistant messages.
+Disabled requests omit it. It is not copied into task summaries or new trace
+fields. Request serialization, error handling and bounded retries are centralized
+in `runtime/client.py`; `scripts/live_smoke.py` now uses that client and
+`run_goal()`, with cleanup on every exit. Its goal check uses archive-relative
+`notes.md`, fixing the previous `outputs/notes.md` mismatch.
+
 ## Remaining lifecycle contracts
 
 The current verifier is D's deterministic acceptance component, not a completed
@@ -228,6 +255,8 @@ timeouts, memory toggles, planning repair, model wire format, and a synthetic
 end-to-end integration. Scripted verdicts in `tests/helpers.py` verify A's use of
 D's interface; they are not implementations of D's production evaluator.
 
-Remaining joint validation includes real tools and containers, profiles and
-persistent memory, private/group routing, D's acceptance rules and trace mapping,
-live DeepSeek behavior, and the official dev/mid/final evaluation datasets.
+The 2026-11-11 local suite passes 156 tests, including 25 added regression cases;
+lint and the offline six-case harness are recorded in the changelog. These results
+do not establish live-model performance. Remaining joint validation includes
+container/Git workflows, private/group routing, memory experiments, live DeepSeek
+behavior and the official evaluation datasets when released.

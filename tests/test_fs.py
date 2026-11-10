@@ -105,8 +105,8 @@ async def test_list_returns_entries(tmp_path: Path) -> None:
     assert names == ["a.md", "b.md"]
 
 
-def test_definitions_cover_every_registered_tool() -> None:
+def test_file_tools_are_registered() -> None:
     registry = build()
     names = {tool.definition.name for tool in registry.values()}
-    assert names == {"file_read", "file_write", "file_list", "file_delete", "code_exec"}
+    assert {"file_read", "file_write", "file_list", "file_delete"} <= names
     assert registry["file_delete"].definition.requires_approval is True
