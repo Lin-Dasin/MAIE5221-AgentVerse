@@ -63,6 +63,7 @@ Option A — export for the current shell (works today):
 export LLM_BASE_URL=https://api.deepseek.com      # no /v1: the client appends the path
 export LLM_API_KEY=sk-...
 export LLM_MODEL=deepseek-flash
+export LLM_THINKING=disabled                     # shared client default
 export SEARCH_API_KEY=tvly-...
 ```
 
@@ -73,6 +74,7 @@ Where the values come from:
 | `LLM_BASE_URL` | fixed value, not user-specific | `https://api.deepseek.com` |
 | `LLM_API_KEY` | platform.deepseek.com → API keys → create (shown once, top up first) | `sk-...` |
 | `LLM_MODEL` | `deepseek-flash` (default) or `deepseek-v4-pro` for heavy reasoning. `deepseek-chat` and `deepseek-reasoner` are retired | plain model id |
+| `LLM_THINKING` | optional client setting; defaults to `disabled` | `disabled` or `enabled` |
 | `SEARCH_API_KEY` | tavily.com → dashboard → API keys | `tvly-...` |
 
 Two DeepSeek details that cost real debugging time:
@@ -86,11 +88,13 @@ Two DeepSeek details that cost real debugging time:
   `https://api.deepseek.com/v1/chat/completions` answer 401, so neither path is
   missing. Use the bare host because that is the documented form, and keep it
   consistent across machines.
-- **Thinking mode is on by default** and its tokens count as output. If a step
-  fails with "Model output exceeded the response limit", raise `max_output_tokens`
-  rather than assuming a prompt problem. A request that carries `tools` must also
-  echo `reasoning_content` back on later turns, which the current `ChatMessage`
-  cannot do — so thinking must be disabled until that is handled.
+- **The shared client explicitly defaults to thinking disabled**, independently
+  of provider defaults. Set `LLM_THINKING=enabled` to request thinking; the Runtime
+  preserves `reasoning_content` for assistant-history replay on later tool turns.
+  Thinking tokens consume the output budget, so enabled runs may need a larger
+  `--max-output-tokens`. The smoke script now uses the same client for its probe,
+  Planner and Workers; the old temporary shim has been removed. Both modes have
+  offline HTTP regression coverage, not a new live-provider validation claim.
 
 ```bat
 set LLM_API_KEY=sk-...                             :: cmd
@@ -109,6 +113,7 @@ shutdown. Until it exists, use Option A.
 | Variable | Needed | If missing |
 |---|---|---|
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Before constructing the model client | `ValueError: LLM_BASE_URL, LLM_API_KEY and LLM_MODEL must be set` |
+| `LLM_THINKING` | Optional | Defaults to `disabled`; invalid values raise `ValueError` |
 | `SEARCH_API_KEY` | Only when `web_search` is called | The tool returns a failed result; the service still starts |
 | `GITHUB_TOKEN`, `GITHUB_SANDBOX_REPO` | Only when the git tool exists | No effect yet |
 
@@ -131,3 +136,16 @@ python -m pytest -q
 ```
 
 The first command prints booleans, never the key values.
+
+For an actual model/file workflow after exporting credentials, run from the
+repository root:
+
+```bash
+python -m scripts.live_smoke --goal \
+  "Do not search. Write outputs/notes.md with heading '# Local smoke test'." \
+  --root results/live-file-smoke
+```
+
+The script verifies archive-relative `notes.md`, while Workers write
+`outputs/notes.md`. See [the integration guide](usage-and-integration.md) for the
+search variant, supported acceptance rules and the limits of this smoke check.

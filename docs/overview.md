@@ -34,7 +34,8 @@ Currently A implements planning and worker execution. `Verifier.check()` is a
 deterministic acceptance port; a separate conversational Critic agent is still
 planned. Worker memory hooks exist; Planner automatic memory and Critic lifecycle
 remain A/C integration work. Private/group chat routing remains A/D integration
-work. B/C/D production adapters are not included in the current local snapshot.
+work. B/C/D file/search tools, JSONL memory/profiles, file verdicts, traces and the
+offline harness are present; containers and Git tools remain incomplete.
 
 ## 3. Execution pipeline
 
@@ -90,6 +91,11 @@ Rules:
   `pytest_passes`; D owns their actual interpretation and implementation. A file
   existence check alone does not establish content quality. New criteria require
   agreement with D and an evaluator implementation.
+- Shared `PlanPreflight` defaults to D's implemented `file_exists` and
+  `text_contains` rules. The application declares other implemented rules through
+  `build_service(supported_acceptance_types=...)`; declaring support does not
+  implement `pytest_passes`. Input and goal file paths must match published
+  declarations before execution. See the [integration guide](usage-and-integration.md#33-plan-preflight).
 - `inputs` never contains an absolute path or another agent's workspace path.
 - `depth` is 0 for planner-created tasks and 1 for worker-requested subtasks.
   Deeper nesting is not supported.
@@ -197,8 +203,8 @@ For the integration baseline, execution time is
 it includes planning, waiting, execution, final verification and reflection work
 completed before return. Do not start timing at the first Worker. D should also
 retain stage timestamps if an official harness specifies another endpoint. All
-three aggregates belong to `harness/` (contract 2); the harness is not implemented
-in this local snapshot. Failed planning still contributes to the goal denominator.
+three aggregates belong to `harness/` (contract 2); its current CLI runs the fixed
+`offline-smoke --mock` suite. Failed planning still contributes to the goal denominator.
 
 ## 10. Cross-module contracts
 
@@ -209,9 +215,9 @@ entry. This local alignment does not claim that review has already happened.
 
 | # | Contract | Owner | Rule |
 |---|---|---|---|
-| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | To be implemented once in `harness/verdict.py` behind `Verifier.check()`. The orchestrator calls it; code-based checks use B's sandbox. |
+| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | `harness/verdict.py` implements file/text rules behind `Verifier.check()`. Code checks still require B/D's isolated executor integration; A's preflight rejects unsupported rules by default. |
 | 2 | Metric computation | D | Only `harness/` computes `goal_completion_rate`, `subtask_completion_rate` and duration. Other modules expose raw facts, never aggregates. |
-| 3 | Event schema | D | To be defined in `bus/events.py`; not yet frozen or implemented. D maps A's Observer callbacks and B's tool instrumentation to it. |
+| 3 | Event schema | D | `bus/trace.py` maps A's Observer callbacks and wraps B's tools into JSONL records. Full chat routing remains separate work. |
 | 4 | `ToolResult` | A | One pydantic model in `protocol/`, fields `ok` `data` `error` `elapsed` `meta`. Tools return this model instead of defining their own envelope. |
 | 5 | Memory location and workspace lifecycle | B, C | Memory at `workspaces/<agent>/memory/<agent_id>.jsonl`. `inputs/` and `outputs/` are rebuilt per task; `memory/` survives cleanup and container rebuild. |
 | 6 | `AgentProfile` | A model, C data | A defines the model in `protocol/`; C fills `profiles/*.yaml`. The runtime loads declared fields only. |

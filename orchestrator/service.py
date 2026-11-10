@@ -3,7 +3,8 @@
 import asyncio
 from datetime import UTC, datetime
 
-from orchestrator.planner import Planner
+from orchestrator.planner import Planner, PlanningError
+from orchestrator.preflight import PlanContractError
 from orchestrator.scheduler import Scheduler
 from protocol.models import (
     AcceptanceRule,
@@ -47,8 +48,17 @@ class CollaborationService:
                 finished_at=datetime.now(UTC),
                 failure_code=FailureCode.TIMEOUT
                 if isinstance(exc, TimeoutError)
-                else FailureCode.MODEL_ERROR,
-                failure_reason=f"Planning failed: {type(exc).__name__}",
+                else (
+                    FailureCode.INVALID_OUTPUT
+                    if isinstance(exc, PlanContractError)
+                    else FailureCode.MODEL_ERROR
+                ),
+                failure_reason="Planning failed: "
+                + (
+                    str(exc)
+                    if isinstance(exc, (PlanningError, PlanContractError))
+                    else type(exc).__name__
+                ),
             )
         try:
             result = await self.scheduler.run(graph, config)
@@ -59,12 +69,15 @@ class CollaborationService:
                 tasks=[],
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
-                failure_code=FailureCode.INTERNAL_ERROR,
-                failure_reason=f"Run initialization failed: {type(exc).__name__}",
+                failure_code=FailureCode.INVALID_OUTPUT
+                if isinstance(exc, PlanContractError)
+                else FailureCode.INTERNAL_ERROR,
+                failure_reason="Run initialization failed: "
+                + (str(exc) if isinstance(exc, PlanContractError) else type(exc).__name__),
             )
         result.started_at = started_at
         return result
 
     async def run_graph(self, graph: TaskGraph, config: RunConfig) -> RunResult:
-        """Run a prevalidated graph for deterministic development/integration tests."""
+        """Validate and run a fixed graph; invalid contracts raise before side effects."""
         return await self.scheduler.run(graph, config)

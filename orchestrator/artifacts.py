@@ -6,6 +6,14 @@ from pathlib import Path
 from protocol.models import InputRef, Task, relative_path
 
 
+def archive_path(output: str) -> str:
+    """Map a declared workspace output to its published archive-relative file."""
+    relative_path(output)
+    if not output.startswith("outputs/"):
+        raise ValueError("task outputs must be files under outputs/")
+    return output.removeprefix("outputs/")
+
+
 def inside(root: Path, relative: str) -> Path:
     relative_path(relative)
     candidate = root / relative
@@ -81,7 +89,7 @@ class ArtifactStore:
         try:
             for output in task.outputs:
                 source = inside(self.workspace(task.assignee), output)
-                copy_file(source, inside(temporary, output.removeprefix("outputs/")))
+                copy_file(source, inside(temporary, archive_path(output)))
             temporary.replace(self.archive / task.task_id)
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)
@@ -105,8 +113,8 @@ class ArtifactStore:
         return [
             InputRef(
                 from_task=child.task_id,
-                path=output.removeprefix("outputs/"),
-                destination=f"inputs/delegated/{child.task_id}/{output.removeprefix('outputs/')}",
+                path=archive_path(output),
+                destination=f"inputs/delegated/{child.task_id}/{archive_path(output)}",
             )
             for child in children
             if child.task_id in self.accepted
