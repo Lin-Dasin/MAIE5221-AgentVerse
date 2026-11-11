@@ -32,7 +32,8 @@ def test_offline_command_writes_real_verdicts(tmp_path, capsys, fail_on_goal_fai
     assert all(case["rejected_result"] is None for case in report["tasks"])
     assert all(
         "Invalid returned records" not in warning
-        for case in report["tasks"] for warning in case["warnings"]
+        for case in report["tasks"]
+        for warning in case["warnings"]
     )
     successful = [case for case in report["tasks"] if case["status"] == "success"]
     assert all(case["artifacts"] for case in successful)
@@ -63,3 +64,22 @@ def test_mock_mode_must_be_explicit():
     with pytest.raises(SystemExit) as exc:
         main([])
     assert exc.value.code == 2
+
+
+def test_dev_entry_point_runs_named_fixture_subset_without_mock_flag(tmp_path, capsys):
+    report = tmp_path / "dev.json"
+    assert (
+        main(["--suite", "dev", "--output", str(report), "--work-dir", str(tmp_path / "runs")]) == 0
+    )
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["suite"] == "dev" and data["mode"] == "offline"
+    assert [case["task_id"] for case in data["tasks"]] == [
+        "f1-status-brief",
+        "f2-brief-handoff",
+        "f3-two-inputs",
+        "p3-delegation",
+    ]
+    summary = data["summary"]
+    assert summary["goals_passed"] == summary["goals_total"] == 4
+    assert summary["subtasks_passed"] == summary["subtasks_total"] == 8
+    assert "fixture subset" in capsys.readouterr().out

@@ -1,0 +1,322 @@
+{
+  "suite": "dev",
+  "mode": "offline",
+  "cases": [
+    {
+      "task_id": "f1-status-brief",
+      "goal": "Write a Chinese status brief with scope and ownership.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "brief",
+            "title": "Prepare status-brief.md",
+            "assignee": "writer",
+            "outputs": [
+              "outputs/status-brief.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/status-brief.md",
+                "text": "## 范围"
+              }
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "brief",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "status-brief.md",
+            "text": "## 范围"
+          },
+          {
+            "type": "text_contains",
+            "path": "status-brief.md",
+            "text": "## 负责人"
+          }
+        ]
+      },
+      "steps": {
+        "brief": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/status-brief.md": "# 进度简报\n\n## 范围\n本周联调。\n\n## 负责人\nRole D\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "f2-brief-handoff",
+      "goal": "Hand a brief from the researcher to the writer.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "brief",
+            "title": "Prepare brief.md",
+            "assignee": "researcher",
+            "outputs": [
+              "outputs/brief.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/brief.md",
+                "text": "交接依据"
+              }
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "report",
+            "title": "Prepare final.md",
+            "assignee": "writer",
+            "outputs": [
+              "outputs/final.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/final.md",
+                "text": "## 汇总"
+              }
+            ],
+            "max_retries": 0,
+            "depends_on": [
+              "brief"
+            ],
+            "inputs": [
+              {
+                "from_task": "brief",
+                "path": "brief.md",
+                "as": "inputs/brief.md"
+              }
+            ]
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "final.md",
+            "text": "## 汇总"
+          },
+          {
+            "type": "text_contains",
+            "path": "final.md",
+            "text": "交接依据"
+          }
+        ]
+      },
+      "steps": {
+        "brief": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/brief.md": "交接依据\n"
+            }
+          }
+        ],
+        "report": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/final.md": "## 汇总\n交接依据\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "f3-two-inputs",
+      "goal": "Hand two accepted source files to a summary task.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "metrics",
+            "title": "Prepare metrics.md",
+            "assignee": "researcher",
+            "outputs": [
+              "outputs/metrics.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/metrics.md",
+                "text": "目标 1/1"
+              }
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "checks",
+            "title": "Prepare checks.md",
+            "assignee": "reviewer",
+            "outputs": [
+              "outputs/checks.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/checks.md",
+                "text": "验收 2/2"
+              }
+            ],
+            "max_retries": 0
+          },
+          {
+            "task_id": "summary",
+            "title": "Prepare summary.md",
+            "assignee": "writer",
+            "outputs": [
+              "outputs/summary.md"
+            ],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/summary.md",
+                "text": "## 结果"
+              }
+            ],
+            "max_retries": 0,
+            "depends_on": [
+              "metrics",
+              "checks"
+            ],
+            "inputs": [
+              {
+                "from_task": "metrics",
+                "path": "metrics.md",
+                "as": "inputs/metrics.md"
+              },
+              {
+                "from_task": "checks",
+                "path": "checks.md",
+                "as": "inputs/checks.md"
+              }
+            ]
+          }
+        ],
+        "final_task_id": "summary",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "summary.md",
+            "text": "目标 1/1"
+          },
+          {
+            "type": "text_contains",
+            "path": "summary.md",
+            "text": "验收 2/2"
+          }
+        ]
+      },
+      "steps": {
+        "metrics": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/metrics.md": "目标 1/1\n"
+            }
+          }
+        ],
+        "checks": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/checks.md": "验收 2/2\n"
+            }
+          }
+        ],
+        "summary": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/summary.md": "## 结果\n目标 1/1\n验收 2/2\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "task_id": "p3-delegation",
+      "goal": "Insert and verify a delegated child before the parent completes.",
+      "graph": {
+        "tasks": [
+          {
+            "task_id": "report",
+            "title": "Offline fixture: report",
+            "assignee": "writer",
+            "depends_on": [],
+            "inputs": [],
+            "acceptance": [
+              {
+                "type": "text_contains",
+                "path": "outputs/report.md",
+                "text": "## Conclusion"
+              }
+            ],
+            "outputs": [
+              "outputs/report.md"
+            ],
+            "max_retries": 0
+          }
+        ],
+        "final_task_id": "report",
+        "goal_acceptance": [
+          {
+            "type": "text_contains",
+            "path": "report.md",
+            "text": "## Conclusion"
+          }
+        ]
+      },
+      "steps": {
+        "report": [
+          {
+            "kind": "delegate",
+            "files": {
+              "outputs/draft.md": "# Parent draft\n"
+            },
+            "children": [
+              {
+                "task_id": "research",
+                "title": "Offline fixture: research",
+                "assignee": "researcher",
+                "depends_on": [],
+                "inputs": [],
+                "acceptance": [
+                  {
+                    "type": "file_exists",
+                    "path": "outputs/research.md"
+                  }
+                ],
+                "outputs": [
+                  "outputs/research.md"
+                ],
+                "max_retries": 0
+              }
+            ]
+          },
+          {
+            "kind": "write",
+            "files": {
+              "outputs/report.md": "# Fixture\n## Conclusion\n完成。\n"
+            }
+          }
+        ],
+        "research": [
+          {
+            "kind": "write",
+            "files": {
+              "outputs/research.md": "# Research\n离线参考资料。\n"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
