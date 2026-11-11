@@ -15,12 +15,12 @@ class CaseReport(Contract):
     run_id: str
     status: Literal["success", "failed"]
     duration_sec: float = Field(ge=0)
-    duration_scope: Literal["fixed_graph"] = "fixed_graph"
+    duration_scope: Literal["fixed_graph", "goal_with_planning"] = "fixed_graph"
     tokens: int = Field(ge=0)
     token_scope: Literal["worker_only"] = "worker_only"
     artifacts: list[str]
     acceptance_passed: int = Field(ge=0)
-    acceptance_total: int = Field(ge=1)
+    acceptance_total: int = Field(ge=0)
     acceptance_evaluated: bool
     subtasks_total: int = Field(ge=0)
     subtasks_passed: int = Field(ge=0)
@@ -51,7 +51,7 @@ class EvaluationReport(Contract):
     schema_version: str = "1.0"
     run_id: str
     suite: str
-    mode: Literal["offline"] = "offline"
+    mode: Literal["offline", "live"] = "offline"
     suite_sha256: str
     started_at: datetime
     finished_at: datetime
@@ -61,6 +61,18 @@ class EvaluationReport(Contract):
 
 def summarize_case(
     case: EvaluationCase, result: RunResult, config: RunConfig, root: Path
+) -> CaseReport:
+    return summarize_result(case.task_id, len(case.graph.goal_acceptance), result, config, root)
+
+
+def summarize_result(
+    task_id: str,
+    acceptance_total: int,
+    result: RunResult,
+    config: RunConfig,
+    root: Path,
+    *,
+    duration_scope: Literal["fixed_graph", "goal_with_planning"] = "fixed_graph",
 ) -> CaseReport:
     """Count each returned node once; never infer success from an absent result."""
     node_ids = [task.task_id for task in result.tasks]
@@ -109,16 +121,15 @@ def summarize_case(
             else "Goal was not evaluated"
         )
     return CaseReport(
-        task_id=case.task_id,
+        task_id=task_id,
         run_id=result.run_id,
         status="success" if passed else "failed",
         duration_sec=duration,
+        duration_scope=duration_scope,
         tokens=sum(node.tokens for node in result.tasks),
         artifacts=artifacts,
         acceptance_passed=verdict.checks_passed if verdict is not None else 0,
-        acceptance_total=verdict.checks_total
-        if verdict is not None
-        else len(case.graph.goal_acceptance),
+        acceptance_total=verdict.checks_total if verdict is not None else acceptance_total,
         acceptance_evaluated=verdict is not None,
         subtasks_total=len(result.tasks),
         subtasks_passed=sum(node.status == TaskStatus.SUCCESS for node in result.tasks),

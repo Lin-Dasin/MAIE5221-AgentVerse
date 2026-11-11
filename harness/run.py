@@ -14,10 +14,10 @@ from harness.runner import run_suite
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--suite", default="offline-smoke", help="offline-smoke or a JSON file path"
+        "--suite", default="offline-smoke", help="dev, offline-smoke, or a JSON file path"
     )
     parser.add_argument(
-        "--mock", action="store_true", help="acknowledge scripted offline execution"
+        "--mock", action="store_true", help="required for offline-smoke and custom suites"
     )
     parser.add_argument(
         "--output", type=Path, help="new JSON output file; existing files are refused"
@@ -26,11 +26,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--case-timeout", type=float, default=30.0)
     parser.add_argument("--fail-on-goal-failure", action="store_true")
     args = parser.parse_args(argv)
-    if not args.mock:
-        parser.error("this version supports offline execution only; pass --mock explicitly")
+    if args.suite != "dev" and not args.mock:
+        parser.error("pass --mock for offline-smoke or a custom suite")
     suite_path = (
-        Path(__file__).parent / "suites/offline-smoke.json"
-        if args.suite == "offline-smoke"
+        Path(__file__).parent / "suites" / f"{args.suite}.json"
+        if args.suite in {"dev", "offline-smoke"}
         else Path(args.suite)
     )
     try:
@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     summary = report.summary
     print("OFFLINE: scripted Worker, real scheduler and verifier; no live model metrics.")
+    if args.suite == "dev":
+        print("Dev Set fixture subset: F1-F3 and P3.")
     print(f"Goals: {summary.goals_passed}/{summary.goals_total}")
     print(f"Subtasks: {summary.subtasks_passed}/{summary.subtasks_total}")
     print(f"JSON: {output.resolve()}")
