@@ -211,11 +211,11 @@ async def run_demo(
     return report
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, default=Path("results/h1-demo"))
     parser.add_argument("--timeout", type=float, default=60, help="Seconds to wait for a title")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be finite and positive")
     report = asyncio.run(run_demo(args.work_dir, approval_timeout_sec=args.timeout))
