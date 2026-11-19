@@ -1,0 +1,267 @@
+{
+  "evaluation": {
+    "mode": "live",
+    "run_id": "fdafdc45184e4ec3b43b188564434387",
+    "summary": {
+      "goals_total": 1,
+      "goals_passed": 1,
+      "goal_completion_rate": 1.0,
+      "subtasks_total": 3,
+      "subtasks_passed": 3,
+      "subtask_completion_rate": 1.0,
+      "avg_duration_sec": 27.901471,
+      "unreported_subtasks_total": 0,
+      "undefined_reasons": {}
+    },
+    "tasks": [
+      {
+        "subtasks_passed": 3,
+        "subtasks_total": 3,
+        "status": "success",
+        "warnings": [],
+        "acceptance_total": 2,
+        "acceptance_passed": 2,
+        "raw_result": {
+          "graph": {
+            "final_task_id": "summary",
+            "tasks": [
+              {
+                "task_id": "alpha_source",
+                "assignee": "owner_a",
+                "inputs": [],
+                "outputs": [
+                  "outputs/alpha.md"
+                ],
+                "depends_on": []
+              },
+              {
+                "task_id": "beta_source",
+                "assignee": "owner_b",
+                "inputs": [],
+                "outputs": [
+                  "outputs/beta.md"
+                ],
+                "depends_on": []
+              },
+              {
+                "task_id": "summary",
+                "assignee": "writer",
+                "inputs": [
+                  {
+                    "from_task": "alpha_source",
+                    "path": "alpha.md",
+                    "destination": "inputs/alpha.md"
+                  },
+                  {
+                    "from_task": "beta_source",
+                    "path": "beta.md",
+                    "destination": "inputs/beta.md"
+                  }
+                ],
+                "outputs": [
+                  "outputs/summary.md"
+                ],
+                "depends_on": [
+                  "alpha_source",
+                  "beta_source"
+                ]
+              }
+            ]
+          }
+        },
+        "tokens": 14936,
+        "failure_reason": null
+      }
+    ]
+  },
+  "trace": [
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 1,
+      "event": "plan_ready"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 2,
+      "event": "task_changed",
+      "task_id": "alpha_source",
+      "agent_id": "owner_a",
+      "status": "running"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 3,
+      "event": "tool_finished",
+      "task_id": "alpha_source",
+      "agent_id": "owner_a",
+      "tool": "file_write",
+      "call_id": "34d9fef0982375687ef82b26f06c5f0a4a8d877793d98b39cde39391204491cd",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 4,
+      "event": "task_changed",
+      "task_id": "alpha_source",
+      "agent_id": "owner_a",
+      "status": "reviewing"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 5,
+      "event": "task_changed",
+      "task_id": "alpha_source",
+      "agent_id": "owner_a",
+      "status": "success"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 6,
+      "event": "task_changed",
+      "task_id": "beta_source",
+      "agent_id": "owner_b",
+      "status": "running"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 7,
+      "event": "tool_finished",
+      "task_id": "beta_source",
+      "agent_id": "owner_b",
+      "tool": "file_write",
+      "call_id": "10ca1ec7e2ff77b0504477cd5105568d84cb953f674e0a470deef37fc2534aaa",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 8,
+      "event": "task_changed",
+      "task_id": "beta_source",
+      "agent_id": "owner_b",
+      "status": "reviewing"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 9,
+      "event": "task_changed",
+      "task_id": "beta_source",
+      "agent_id": "owner_b",
+      "status": "success"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 10,
+      "event": "artifacts_handed_off",
+      "task_id": "summary",
+      "inputs": [
+        {
+          "from_task": "alpha_source",
+          "path": "alpha.md",
+          "destination": "inputs/alpha.md"
+        },
+        {
+          "from_task": "beta_source",
+          "path": "beta.md",
+          "destination": "inputs/beta.md"
+        }
+      ]
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 11,
+      "event": "task_changed",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "status": "running"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 12,
+      "event": "tool_finished",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "tool": "file_read",
+      "call_id": "c14b0355297a85b039888b14df04290cf52c257d7e5884abd2805be60a867bc1",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 13,
+      "event": "tool_finished",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "tool": "file_read",
+      "call_id": "8f7e8545f29cd6ba498b582305ed1542d9581352f4e23d5fe16376b4541554c3",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 14,
+      "event": "tool_finished",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "tool": "file_write",
+      "call_id": "eaf0d556d5016da78ee7ce3f83f7dbb40aa8b163b75312e5441b2b7c3c7c37d6",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 15,
+      "event": "tool_finished",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "tool": "file_read",
+      "call_id": "ffa576217dee887def48dc995a7d861eb82a4b685bbc648946448a4192c560a7",
+      "ok": true
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 16,
+      "event": "task_changed",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "status": "reviewing"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 17,
+      "event": "task_changed",
+      "task_id": "summary",
+      "agent_id": "writer",
+      "status": "success"
+    },
+    {
+      "run_id": "fdafdc45184e4ec3b43b188564434387",
+      "sequence": 18,
+      "event": "run_finished",
+      "status": "success"
+    }
+  ],
+  "file-reads": [
+    {
+      "agent_id": "writer",
+      "task_id": "summary",
+      "path": "inputs/alpha.md",
+      "text_sha256": "ba952fa7c8875e907a89d570a1486ab98b8c702e6ed06fa0234859326f93de60"
+    },
+    {
+      "agent_id": "writer",
+      "task_id": "summary",
+      "path": "inputs/beta.md",
+      "text_sha256": "38008f80d62246a6a4d72e6123c2235d0ef812a2ce401cad16218c2b9a075546"
+    },
+    {
+      "agent_id": "writer",
+      "task_id": "summary",
+      "path": "outputs/summary.md",
+      "text_sha256": "d5d6e139771b6a9565d0746d6ae8561f29f44f95ba418c7704a00136b290a33c"
+    }
+  ],
+  "files": {
+    "artifacts/fdafdc45184e4ec3b43b188564434387/alpha_source/alpha.md": "P2-ALPHA-731 Match every invoice against its purchase order and receipt before payment, and escalate any price or quantity variance to the approver.\r\n",
+    "artifacts/fdafdc45184e4ec3b43b188564434387/beta_source/beta.md": "P2-BETA-946 Schedule a monthly restore test of your backups, not just a copy check, so you know recovery actually works before you need it.\r\n",
+    "artifacts/fdafdc45184e4ec3b43b188564434387/summary/summary.md": "P2-ALPHA-731 Match every invoice against its purchase order and receipt before payment, and escalate any price or quantity variance to the approver.\r\nP2-BETA-946 Schedule a monthly restore test of your backups, not just a copy check, so you know recovery actually works before you need it.\r\n",
+    "workspaces/writer/inputs/alpha.md": "P2-ALPHA-731 Match every invoice against its purchase order and receipt before payment, and escalate any price or quantity variance to the approver.\r\n",
+    "workspaces/writer/inputs/beta.md": "P2-BETA-946 Schedule a monthly restore test of your backups, not just a copy check, so you know recovery actually works before you need it.\r\n"
+  }
+}

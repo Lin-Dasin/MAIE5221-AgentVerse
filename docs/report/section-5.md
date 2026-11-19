@@ -312,20 +312,69 @@ cases in the offline `dev` batch are a runnable subset of this plan.
 | F2 | File workflows | Read the handed-off `inputs/brief.md`. Verify the returned text matches the handoff and `final.md` contains the heading and source text. | Live fixed-graph pass |
 | F3 | File workflows | Read `inputs/metrics.md` and `inputs/checks.md`. Verify both reads and both source bodies in `summary.md`. | Live fixed-graph pass |
 | P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Local live single-node pilot passed. |
-| P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Pending live `run_goal` integration |
+| P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Live: both handoffs verified in two runs. Default planner missed the goal; guided planner passed. |
 | P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Offline integration with real file tools passed. |
 | H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Offline terminal demo and automated stdin checks passed. |
 | H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Automated terminal input and real file tool passed. |
 | H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Expected denial control passed. |
 | T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Scripted and DeepSeek fixture runs passed. Pending real Tavily run. |
-| T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | Pending B isolation and test adapter |
-| T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | Pending B Git adapter and test repository authorization |
+| T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | B's PR #23 supplies a host-subprocess pytest runner. D can integrate trusted fixtures on the PR revision. Container isolation remains pending. |
+| T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | PR #23 supplies Git tools. A local commit can be tested on that revision. Remote acceptance requires an authorized sandbox repository and an approved push. |
 | M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Local live English pilot verified persistence. |
 | M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | Offline top-one recall: English 3/3, Chinese 0/3. |
 | M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | One live pair verified the toggle on a memory-dependent task. |
 
 For H3, the denial can satisfy the control's expected behavior while the raw
 goal outcome remains failed or blocked. Report these two observations separately.
+
+#### Dev evaluation entry points
+
+Run commands from the repository root with the project's Python environment.
+Historical pilots in `results/baselines/` are local evidence; a fresh checkout
+can use the commands below.
+
+| Coverage | Entry point | Measurement |
+|---|---|---|
+| F1–F3, P3 | `python -m harness.run --suite dev` | Four offline goals and their nodes. P3 exercises dynamic delegation. |
+| P1 | `python -m ui.cli run --help` | Live natural-language single-goal entry point; the historical pilot used fixed acceptance. |
+| P2 | `python -m harness.p2 run --work-dir results/p2` | Requests a live DeepSeek run. Set the process variables LLM_BASE_URL, LLM_MODEL and LLM_API_KEY first. Add `--guided` for the second planner profile. |
+| P2 offline | `python -m harness.p2 check RUN_DIR` | Recompute the verdict from a saved run directory, including both handoffs, successful reads and the accepted final text. Exit 0 means pass, 1 means failed checks, 2 means unusable input or command error. |
+| H1 | `python -m ui.cli h1` | Interactive clarification and accepted output. |
+| H2, H3 | `python -m ui.cli permission --scenario h2` or `h3` | Approval control and raw task outcome, reported separately. |
+| T1–T3 | See tool cases above | T1 has a fixture-backed search pilot. B can run the real Tavily check with their locally configured key. T2/T3 integration can target PR #23 before merge. |
+| M1, M2, M3 | `python -m harness.memory_recall --output results/m2.json` for M2 | The current offline executable measures top-one recall. M1 reflection and M3 memory on/off are separate historical pilots. |
+
+On November 19 D checked B's proposed interfaces in a separate source snapshot
+of [PR #23](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/23) at
+`9aa9bbc`. The eight pytest-runner tests passed on Windows. Eight of nine Git
+tests passed. In the remaining test, the local bare repository contained the
+pushed commit and expected file on `master`, while its default HEAD pointed at
+an empty `main`. T3 should inspect the ref returned by the tool, compare its
+commit SHA and read the file at that commit. This exercise used a local remote.
+
+### P2 live two-source handoff
+
+On November 19, 2026, two runs on `develop` at `2c794b9` used the normal
+`ui.goal.run_goal` workflow, DeepSeek (requested model `deepseek-chat`), and
+real file tools. Evaluation profiles supplied two independent source authors
+and one writer. Both runs used the same natural-language goal and two fixed
+final text checks. Both generated their own graph. An audit wrapper recorded
+the paths and text hashes of successful reads from the real executor.
+
+| Planner profile | Goals | Nodes | Seconds including planning | Worker tokens |
+|---|---:|---:|---:|---:|
+| Default | 0/1 | 2/3 | 38.04 | 25,945 |
+| With workspace-path and task-description guidance | 1/1 | 3/3 | 27.90 | 14,936 |
+
+In both runs the writer received byte-identical copies of both source archives
+and read both inputs. In the first run, node acceptance targeted bare filenames,
+while declared outputs lived under `outputs/`. The source task titles omitted
+the requested recommendation topics. The writer retried and reached its response
+limit without publishing an accepted summary. In the second run, only the
+evaluation planner prompt changed. Every node passed on its first attempt,
+and the accepted summary reproduced both independently written lines verbatim.
+The evidence is under `results/baselines/p2-live-20261119/`: each run contains
+`evaluation.json`, `trace.jsonl`, `file-reads.jsonl` and `p2-check.json`.
 
 ### M2 bilingual recall
 
@@ -372,7 +421,9 @@ python -m harness.run --suite offline-smoke --mock
 
 ## Remaining integration decisions
 
-- B/D: supply the isolated execution and result contract for `pytest_passes`.
+- B/D: integrate PR #23's verifier-side runner for trusted T2 fixtures. Coordinate
+  supported rules with A's planner preflight and retain container isolation as
+  a separate requirement for generated code.
 - A/D: keep the structured rule vocabulary and the two acceptance roots aligned.
 - A/D: define reporting for scheduler initialization failures that return a graph
   but no task records; this is a later Harness aggregation concern.
