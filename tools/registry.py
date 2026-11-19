@@ -20,6 +20,7 @@ from tools.fs import (
     read_file,
     write_file,
 )
+from tools.web_search import WEB_SEARCH, run_search
 
 
 def build() -> dict[str, RegisteredTool]:
@@ -48,6 +49,11 @@ def build() -> dict[str, RegisteredTool]:
             definition=CODE_EXEC,
             handler=run_code,
             required=("code",),
+        ),
+        WEB_SEARCH.name: RegisteredTool(
+            definition=WEB_SEARCH,
+            handler=run_search,
+            required=("query",),
         ),
     }
 
