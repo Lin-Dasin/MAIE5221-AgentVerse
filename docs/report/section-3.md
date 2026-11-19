@@ -233,9 +233,11 @@ that is the verifier's job, not the sandbox's.
   already caused one false "key missing" report.
 - **Git credentials are injected per call.** `git_push` builds
   `https://x-access-token:<token>@host/...` at call time, never writes it to disk, and
-  replaces the token with `***` in any error text before returning it to the model. Git
-  is additionally run with `GIT_TERMINAL_PROMPT=0` and an empty `GIT_ASKPASS` so a
-  credential prompt cannot block a task.
+  replaces the token with `***` in any error text before returning it to the model. A
+  timeout rebuilds the message from the subcommand alone, because
+  `str(subprocess.TimeoutExpired)` embeds the full argv — which is where the token
+  would otherwise appear. Git is additionally run with `GIT_TERMINAL_PROMPT=0` and an
+  empty `GIT_ASKPASS` so a credential prompt cannot block a task.
 - **Trace is metadata only.** Tool name, durations, agent id, failure category. No
   arguments, no file contents, no keys.
 
@@ -243,7 +245,7 @@ that is the verifier's job, not the sandbox's.
 
 At the time of writing:
 
-- `pytest -q` → **256 passed, 3 skipped**. The three skips are symlink cases that need
+- `pytest -q` → **258 passed, 3 skipped**. The three skips are symlink cases that need
   Windows Developer Mode; they run on CI.
 - `ruff check .` → clean.
 - Live two-task run (`research` → `write`) against the real API: both tasks succeeded,
