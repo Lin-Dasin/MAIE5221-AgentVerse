@@ -167,6 +167,19 @@ pending call; other queued calls remain pending. Every approved protected call
 therefore has its own decision record. D chooses the private/group channel for
 questions and may broadcast appropriate summaries, not internal payloads.
 
+## Message storage and conversation history
+
+Role D stores conversations, fixed membership and ordered message events in
+SQLite. Private conversations contain two participants. Group history is
+available to each registered participant. Publishing and history queries check
+membership using the identity supplied by the local caller. Integration with
+the actual user and Agent identity and routing remains an A/D contract.
+
+The CLI exposes `messages create`, `messages publish` and `messages history`.
+The store accepts messages and summaries of assignment, negotiation,
+delegation and handoff. Scheduler and tool metadata are written to JSONL Trace
+and can be replayed through the separate `replay` command.
+
 ## Adapter checklist
 
 | Owner | Adapter | Required implementation |
