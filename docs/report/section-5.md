@@ -321,11 +321,34 @@ cases in the offline `dev` batch are a runnable subset of this plan.
 | T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | Pending B isolation and test adapter |
 | T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | Pending B Git adapter and test repository authorization |
 | M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Local live English pilot verified persistence. |
-| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | English recall passed. Pure Chinese offline recall missed. |
+| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | Offline top-one recall: English 3/3, Chinese 0/3. |
 | M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | One live pair verified the toggle on a memory-dependent task. |
 
 For H3, the denial can satisfy the control's expected behavior while the raw
 goal outcome remains failed or blocked. Report these two observations separately.
+
+### M2 bilingual recall
+
+On November 19, 2026, the offline probe ran against the memory implementation
+in `develop` at `2c794b9`. Each language used a fresh store with the same three
+topics: invoice totals, backup integrity and shift schedules. For each topic,
+the probe wrote a successful reflection using `reflect`, queried a related task
+using `retrieve` and checked whether the single returned record contained the
+expected advice. All three English queries selected the intended reflection.
+All three Chinese queries returned empty text. The current tokenizer extracts
+ASCII letters, digits and underscores, so the Chinese titles supply no topic
+tokens. This probe measures retrieval only; prompt injection and goal completion
+require a separate runtime evaluation.
+
+To reproduce the comparison from the repository root:
+
+```bash
+python -m harness.memory_recall --output results/m2-bilingual/evaluation.json
+```
+
+The JSON contains each query, expected advice, returned text and hit flag, plus
+the hit rate per language. A completed run writes the report even when queries
+miss, so the same fixtures can measure changes to the retriever.
 
 For Mid and Final, freeze the released cases and their goal rules before
 running. Record the dataset version, source commit, model ID, mode, memory and
