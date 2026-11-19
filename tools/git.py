@@ -55,16 +55,23 @@ def _env() -> dict[str, str]:
 def _git(
     args: list[str], cwd: Path, *, timeout: float = GIT_TIMEOUT_SEC
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *IDENTITY, *args],
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        env=_env(),
-    )
+    try:
+        return subprocess.run(
+            ["git", *IDENTITY, *args],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=_env(),
+        )
+    except subprocess.TimeoutExpired:
+        # `str(TimeoutExpired)` embeds the full argv, which for `git_push` contains the
+        # access token. Rebuild the message from the subcommand only.
+        raise ToolFailure(f"git {args[0]} timed out after {timeout:g}s") from None
+    except OSError as exc:
+        raise ToolFailure(f"git {args[0]} could not start: {type(exc).__name__}") from None
 
 
 def _failure(proc: subprocess.CompletedProcess[str], action: str, secret: str = "") -> ToolFailure:

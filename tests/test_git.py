@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from protocol.models import ExecutionContext, RunConfig, ToolCall, ToolResult
-from sandbox.executor import SandboxToolExecutor
+from sandbox.executor import SandboxToolExecutor, ToolFailure
 from tools import git as git_tools
 from tools.registry import build
 
@@ -151,3 +151,22 @@ def test_push_requires_approval() -> None:
     registry = build()
     assert registry["git_push"].definition.requires_approval is True
     assert registry["git_commit"].definition.requires_approval is False
+
+
+def test_git_timeout_cannot_leak_the_push_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`str(TimeoutExpired)` embeds argv, and git_push puts the token in argv."""
+    token = "ghp_secret_value"
+    url = f"https://x-access-token:{token}@github.com/acme/sandbox.git"
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd=["git", "push", url], timeout=30)
+
+    monkeypatch.setattr(git_tools.subprocess, "run", explode)
+
+    with pytest.raises(ToolFailure) as caught:
+        git_tools._git(["push", url], tmp_path)
+
+    assert token not in str(caught.value)
+    assert "timed out" in str(caught.value)
