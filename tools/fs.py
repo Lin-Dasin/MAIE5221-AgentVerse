@@ -15,6 +15,8 @@ from sandbox.paths import relative_to, resolve_within
 
 PathArguments = dict[str, Any]
 
+MAX_READ_CHARS = 200_000
+
 
 def _text_argument(arguments: PathArguments, key: str) -> str:
     value = arguments.get(key)
@@ -27,9 +29,20 @@ def read_file(
     arguments: PathArguments, workspace: Path, context: ExecutionContext
 ) -> dict[str, Any]:
     target = resolve_within(workspace, _text_argument(arguments, "path"))
+    try:
+        text = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"file is not UTF-8 text: {relative_to(workspace, target)}") from exc
+
+    truncated = len(text) > MAX_READ_CHARS
+    if truncated:
+        dropped = len(text) - MAX_READ_CHARS
+        text = text[:MAX_READ_CHARS] + f"\n... truncated {dropped} characters"
+
     return {
         "path": relative_to(workspace, target),
-        "text": target.read_text(encoding="utf-8"),
+        "text": text,
+        "truncated": truncated,
     }
 
 
@@ -77,7 +90,10 @@ def delete_file(
 
 FILE_READ = ToolDefinition(
     name="file_read",
-    description="Read a UTF-8 text file inside your workspace and return its contents.",
+    description=(
+        "Read a UTF-8 text file inside your workspace and return its contents. "
+        "Output longer than 200k characters is truncated and flagged."
+    ),
     parameters={
         "type": "object",
         "properties": {

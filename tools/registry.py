@@ -20,6 +20,7 @@ from tools.fs import (
     read_file,
     write_file,
 )
+from tools.git import GIT_COMMIT, GIT_PUSH, git_commit, git_push
 from tools.web_search import WEB_SEARCH, run_search
 
 
@@ -54,6 +55,15 @@ def build() -> dict[str, RegisteredTool]:
             definition=WEB_SEARCH,
             handler=run_search,
             required=("query",),
+        ),
+        GIT_COMMIT.name: RegisteredTool(
+            definition=GIT_COMMIT,
+            handler=git_commit,
+            required=("message",),
+        ),
+        GIT_PUSH.name: RegisteredTool(
+            definition=GIT_PUSH,
+            handler=git_push,
         ),
     }
 

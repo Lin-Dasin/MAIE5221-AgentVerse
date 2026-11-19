@@ -6,6 +6,7 @@ from pathlib import Path
 
 from protocol.models import ExecutionContext, RunConfig, ToolCall, ToolResult
 from sandbox.executor import SandboxToolExecutor
+from tools.fs import MAX_READ_CHARS
 from tools.registry import build
 
 
@@ -110,3 +111,28 @@ def test_file_tools_are_registered() -> None:
     names = {tool.definition.name for tool in registry.values()}
     assert {"file_read", "file_write", "file_list", "file_delete"} <= names
     assert registry["file_delete"].definition.requires_approval is True
+
+
+async def test_large_file_is_truncated(tmp_path: Path) -> None:
+    executor = make_executor(tmp_path)
+    payload = "x" * (MAX_READ_CHARS + 500)
+    await call(executor, "file_write", path="outputs/big.txt", text=payload)
+
+    result = await call(executor, "file_read", path="outputs/big.txt")
+
+    assert result.ok is True
+    assert result.data["truncated"] is True
+    assert len(result.data["text"]) < len(payload)
+    assert "truncated 500 characters" in result.data["text"]
+
+
+async def test_binary_file_is_rejected(tmp_path: Path) -> None:
+    outputs = tmp_path / "workspaces" / "writer" / "outputs"
+    outputs.mkdir(parents=True)
+    (outputs / "blob.bin").write_bytes(b"\xff\xfe\x00\x00binary")
+
+    result = await call(make_executor(tmp_path), "file_read", path="outputs/blob.bin")
+
+    assert result.ok is False
+    assert "not UTF-8" in (result.error or "")
+
