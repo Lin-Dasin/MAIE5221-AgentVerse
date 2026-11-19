@@ -9,6 +9,7 @@ from harness.runner import TracedService
 from harness.verdict import FileVerifier
 from orchestrator.approvals import PolicyApprover
 from orchestrator.planner import Planner
+from orchestrator.preflight import PlanPreflight
 from orchestrator.scheduler import Scheduler
 from orchestrator.service import CollaborationService
 from protocol.models import (
@@ -103,7 +104,11 @@ class FixtureWorker:
 
 
 def build_offline_service(
-    case: EvaluationCase, root: Path, *, observer: Observer | None = None
+    case: EvaluationCase,
+    root: Path,
+    *,
+    observer: Observer | None = None,
+    verifier: FileVerifier | None = None,
 ) -> CollaborationService:
     agent_ids = {task.assignee for task in case.graph.tasks}
     agent_ids.update(
@@ -116,16 +121,21 @@ def build_offline_service(
         AgentProfile(agent_id=agent_id, role="worker", system_prompt="Offline data-only fixture")
         for agent_id in sorted(agent_ids)
     ]
+    if verifier is None:
+        verifier = FileVerifier()
+    preflight = PlanPreflight(supported_acceptance_types=verifier.supported_acceptance_types)
     planner = Planner(
         OfflineModel(),
         AgentProfile(agent_id="planner", role="planner", system_prompt="Offline fixed graph only"),
+        preflight=preflight,
     )
     scheduler = Scheduler(
         FixtureWorker(root, case.steps),
-        FileVerifier(),
+        verifier,
         PolicyApprover(),
         root=root,
         observer=observer,
+        preflight=preflight,
     )
     return CollaborationService(planner, scheduler, workers)
 

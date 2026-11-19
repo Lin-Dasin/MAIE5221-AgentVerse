@@ -1,18 +1,31 @@
 """Deterministic file acceptance using Role A's shared contracts."""
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 from protocol.models import AcceptanceRule, CriticResult, relative_path
 
+PytestRunner = Callable[[Path, str], dict[str, object]]
+
 
 class FileVerifier:
-    """Implement ``protocol.ports.Verifier`` for file and UTF-8 text checks.
+    """Verify files and UTF-8 text, with optional verifier-side pytest execution.
 
     Paths are relative to the caller's root. Node checks use the worker workspace;
     goal checks use the final task archive. No ``outputs/`` prefix is rewritten.
     The caller must keep artifacts stable during verification (serial execution).
+    Supply a pytest runner only for code the execution environment can safely run.
     """
+
+    def __init__(self, *, pytest_runner: PytestRunner | None = None):
+        self._pytest_runner = pytest_runner
+
+    @property
+    def supported_acceptance_types(self) -> frozenset[str]:
+        if self._pytest_runner is not None:
+            return frozenset({"file_exists", "text_contains", "pytest_passes"})
+        return frozenset({"file_exists", "text_contains"})
 
     async def check(self, rules: list[AcceptanceRule], root: Path) -> CriticResult:
         if not rules:
@@ -37,10 +50,9 @@ class FileVerifier:
             defects=defects,
         )
 
-    @staticmethod
-    def _check_rule(rule: AcceptanceRule, root: Path) -> str | None:
-        if rule.type not in {"file_exists", "text_contains"}:
-            return "unsupported_rule: requires Role B's isolated test executor"
+    def _check_rule(self, rule: AcceptanceRule, root: Path) -> str | None:
+        if rule.type not in self.supported_acceptance_types:
+            return f"unsupported_rule: {rule.type} is not enabled for this verifier"
         try:
             # Reuse the protocol's path grammar and also check resolved targets.
             candidate = root / relative_path(rule.path)
@@ -65,4 +77,15 @@ class FileVerifier:
         except OSError as exc:
             # Keep diagnostics useful without exposing absolute host paths.
             return f"file_error: {type(exc).__name__} while inspecting the artifact"
+        if rule.type == "pytest_passes" and self._pytest_runner is not None:
+            try:
+                result = self._pytest_runner(root, rule.path)
+            except Exception as exc:
+                return f"pytest_runner_error: {type(exc).__name__}"
+            if not isinstance(result, dict):
+                return "pytest_runner_error: expected a result dictionary"
+            code = result.get("exit_code")
+            if result.get("passed") is not True or type(code) is not int or code != 0:
+                summary = result.get("summary") or "missing runner summary"
+                return f"pytest_failed: exit_code={code!r}, {summary}"
         return None
