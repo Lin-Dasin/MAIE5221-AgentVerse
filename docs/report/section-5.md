@@ -3,8 +3,11 @@
 Role D implements deterministic file acceptance, fixed-case loading, serial
 batch execution, dual completion metrics, JSON export and per-run JSONL traces.
 The offline suite exercises expected successes and failures. A separate live
-file pilot measures three fixed task graphs with DeepSeek. SQLite event storage,
-replay and the conversational CLI remain planned.
+file pilot measures three fixed task graphs with DeepSeek. An offline terminal
+demo exercises human clarification through A's agent loop. The unified CLI
+accepts file-workflow goals, runs the offline demos, reads evaluation summaries,
+replays JSONL traces and reads SQLite conversation history. Agent conversation
+routing still requires the A/D integration contract.
 
 ## Current progress and execution
 
@@ -19,6 +22,9 @@ replay and the conversational CLI remain planned.
 | `harness/run.py` | Evaluation command entry point |
 | `harness/suites/offline-smoke.json` | Six data-only fixture cases |
 | `bus/trace.py` | JSONL scheduler events and tool-call metadata |
+| `bus/replay.py`, `ui/replay.py` | Read and display a saved trace in recorded order |
+| `bus/messages.py` | SQLite conversation membership and ordered message history |
+| `ui/cli.py`, `ui/goal.py` | Unified terminal commands and natural-language file workflow |
 
 From the synchronized Role D checkout, run:
 
@@ -170,12 +176,17 @@ No live model calls, API credentials or Docker containers are used by these test
 
 ## Live file pilot
 
-On 2026-11-05, the requested model ID `deepseek-chat` ran three fixed task graphs
-with thinking disabled and memory disabled. The isolated checkout used Role D
-base `bf41a98` with the Trace code later committed as `e2b0b3d`, plus Role B's
-file-tool implementation at PR #11 head `bfc8681`. The run evaluates file
-creation, handoff and acceptance with the real model. Its timing covers fixed
-graph execution and its token count covers Worker calls.
+On 2026-11-05, the live pilot ran three fixed task graphs with `deepseek-chat`
+as the requested model ID and with thinking and memory disabled. The isolated
+checkout used Role D base `bf41a98` with the Trace code later committed as
+`e2b0b3d`, plus Role B's file-tool implementation at PR #11 head `bfc8681`.
+The run evaluates file creation, handoff and acceptance with the real model.
+Its timing covers fixed graph execution and its token count covers Worker calls.
+
+The archived report's `model` field comes from the request configuration
+(`client.model`). The client retained response content, tool calls and token
+usage. The provider-returned model ID and historical serving backend are
+unknown from this evidence.
 
 | Case | Goals passed | Nodes passed | Seconds | Worker tokens |
 |---|---:|---:|---:|---:|
@@ -193,33 +204,136 @@ The local archive is `results/baselines/live-file-dev-20261105/`. Its README
 describes how to find the report, traces, accepted Markdown and runnable source
 snapshot. The `results/` directory is ignored by Git.
 
-## Proposed Dev Set coverage
+For a new live run, set `LLM_MODEL=deepseek-flash` in the local environment
+file. This is the model ID listed in the current
+[DeepSeek model table](https://api-docs.deepseek.com/quick_start/pricing/).
+
+## Search evaluation pilot
+
+On 2026-11-10, T1 ran against `main` commit `3a8567e`, which includes Role B's
+search adapter from PR #15. A fixed researcher-to-writer graph checked a Python
+release date and a PEP build flag. The goal verifier required a matching official
+URL from each search query and the corresponding fact in the final Markdown.
+
+Both the scripted run and the DeepSeek run with simulated Tavily responses
+passed 1/1 goals, 2/2 nodes and 3/3 goal checks. The DeepSeek request and response
+both identified `deepseek-flash`. The run used an archive-relative handoff path
+in the fixed graph. The true Tavily run and the natural-language handoff in
+[issue #17](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/issues/17) remain open.
+The local evidence is under `results/baselines/search-t1-20261110/`.
+
+## Terminal clarification pilot
+
+The H1 entry point is `python -m ui.h1_demo --timeout 60`. It uses a scripted
+model and a fixed report-writing fixture with A's real runtime and scheduler.
+The agent requests a title through `ask_human`. D's `TerminalClarification`
+callback supplies A's `InteractiveApprover` with a decision bearing the original
+request ID. The task resumes and the final archive must begin with the chosen
+title. Each run gets its own directory under `results/h1-demo/`, containing an
+evaluation JSON, JSONL trace and accepted Markdown when successful.
+
+Automated stdin checks on 2026-11-10 passed the answer, empty-input and timeout
+paths. The answer run passed 1/1 goals and 1/1 nodes. Empty input and timeout
+produced blocked task outcomes and no report. Trace metadata records the wait,
+decision and final state. The title remains in the local evaluation and report.
+The local evidence is `results/baselines/h1-cli-20261110/verified/`.
+
+The callback reads from a duplicate stdin stream so an unanswered question can
+time out without holding interpreter shutdown. Late replies are discarded. A
+session declines further questions until its pending terminal read completes.
+Fifteen focused tests cover terminal behavior and pause/resume integration.
+
+## Replay a trace
+
+Pass the path printed by the H1 demo, or the path from a case's `trace_path`
+field, to `python -m ui.replay`. Resolve relative report paths from the report's
+directory. The command shows the sequence, timestamp and available metadata for
+task states, delegation, file handoffs, tool results and human decisions.
+
+```powershell
+python -m ui.replay path/to/trace.jsonl
+```
+
+The command reads one run per JSONL file. It reports sequence gaps and a missing
+end event while displaying the available events. Invalid records are reported
+with a line number. The displayed outcome is the recorded task run's outcome.
+Exit code 2 means the replay command could not read the trace.
+
+## Current offline integration evidence
+
+The H2/H3 and P3 probes use scripted model replies with A's actual runtime and
+B's actual file tools. Each run has a fresh workspace. The Dev Set batch below
+uses scripted Worker fixtures and the same scheduler and verifier.
+
+| Run | Goals | Nodes | Evidence |
+|---|---:|---:|---|
+| H2, terminal approval | 1/1 | 1/1 | Approval precedes one successful deletion of the generated marker. |
+| H3, policy denial | 0/1 | 0/1 | Expected control passes. The marker is unchanged and deletion was never called. |
+| P3, delegation | 1/1 | 2/2 | Parent reads the actual delegated artifact. Read bytes match the child archive. |
+| Dev fixture subset F1–F3 and P3 | 4/4 | 8/8 | Named offline batch produces evaluation JSON and a Trace per case. |
+
+The local reports are under `results/baselines/permission-h2-h3-20261111/`,
+`results/baselines/delegation-p3-20261111/` and `results/baselines/dev-20261111/`.
+The integrated `develop` snapshot `b2e893e` with these Role D changes passed
+200 tests. Three symlink cases were skipped on Windows. Ruff passed.
+
+The two project entry points can be tried with these commands from the repo root.
+
+```powershell
+python -m ui.cli --help
+python -m ui.cli h1
+python -m harness.run --suite dev
+```
+
+`ui.cli run` uses the integrated B file tools and compatible YAML profiles.
+It reads the model configuration from the process environment. Pass a JSON array
+of fixed acceptance rules with `--acceptance` for a scored run. The JSON report
+records the requested model ID and includes planning in the elapsed time.
+Token totals cover Worker calls.
+
+A separate CLI smoke run used the integrated snapshot plus Role A's
+[PR #19](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/19) at `23c59f7`.
+It requested `deepseek-flash` and passed 1/1 goals, 1/1 nodes and 1/1 fixed
+acceptance checks. Elapsed time was 11.17 seconds including planning, with
+5,244 Worker tokens. Its archived report and Trace are under
+`results/baselines/cli-live-20261111/`. The snapshot includes a pending Role A
+change, so this run is evidence for that integration combination.
+
+## Dev Set coverage
 
 The team plan calls for three cases in each of five categories, with first
 metrics due November 8. The five groups below are proposed for team review.
-The measured pilot covers F1–F3. The other rows are prepared scenarios and
-acceptance checks for the next integrations.
+The live file pilot covers F1–F3. T1 uses simulated Tavily responses. The four
+cases in the offline `dev` batch are a runnable subset of this plan.
 
 | ID | Category | Task and acceptance | Status or dependency |
 |---|---|---|---|
 | F1 | File workflows | Create `status-brief.md` with the Chinese scope and owner sections. Verify required text in the accepted file. | Live fixed-graph pass |
 | F2 | File workflows | Read the handed-off `inputs/brief.md`. Verify the returned text matches the handoff and `final.md` contains the heading and source text. | Live fixed-graph pass |
 | F3 | File workflows | Read `inputs/metrics.md` and `inputs/checks.md`. Verify both reads and both source bodies in `summary.md`. | Live fixed-graph pass |
-| P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Pending live `run_goal` integration |
+| P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Local live single-node pilot passed. |
 | P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Pending live `run_goal` integration |
-| P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Pending live delegation case |
-| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Pending interactive callback |
-| H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Pending interactive callback and B tool integration |
-| H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Pending policy run with B tool integration |
-| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Pending B search adapter |
+| P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Offline integration with real file tools passed. |
+| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Offline terminal demo and automated stdin checks passed. |
+| H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Automated terminal input and real file tool passed. |
+| H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Expected denial control passed. |
+| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Scripted and DeepSeek fixture runs passed. Pending real Tavily run. |
 | T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | Pending B isolation and test adapter |
 | T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | Pending B Git adapter and test repository authorization |
-| M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Pending C memory adapter |
-| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | Pending C retrieval and trace integration |
-| M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | Pending C adapter and comparable snapshots |
+| M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Local live English pilot verified persistence. |
+| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | English recall passed. Pure Chinese offline recall missed. |
+| M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | One live pair verified the toggle on a memory-dependent task. |
 
 For H3, the denial can satisfy the control's expected behavior while the raw
 goal outcome remains failed or blocked. Report these two observations separately.
+
+For Mid and Final, freeze the released cases and their goal rules before
+running. Record the dataset version, source commit, model ID, mode, memory and
+approval settings, both completion rates, timings, Worker tokens and Trace
+references. Classify failures by planning, missing input, tool, approval,
+acceptance or timeout. Keep the internal pilot measurements distinct from the
+official results. The project workspace contains no official Mid or Final case
+file for this run.
 
 ## Reproduce this local validation
 
