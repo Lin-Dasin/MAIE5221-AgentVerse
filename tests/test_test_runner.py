@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sandbox.test_runner import MAX_OUTPUT_CHARS, run_pytest
+from sandbox.test_runner import MAX_OUTPUT_CHARS, _decode, run_pytest
 
 
 def write(workspace: Path, relative: str, text: str) -> Path:
@@ -49,13 +49,29 @@ def test_collecting_nothing_is_not_a_pass(tmp_path: Path) -> None:
 
 
 def test_slow_suite_times_out_instead_of_hanging(tmp_path: Path) -> None:
-    write(tmp_path, "test_slow.py", "import time\n\ndef test_sleeps():\n    time.sleep(30)\n")
+    # Writes to stderr before sleeping: on the timeout path subprocess reports the
+    # captured streams as bytes even with text=True, so this case fails loudly if the
+    # decoding regresses.
+    write(
+        tmp_path,
+        "test_slow.py",
+        "import sys, time\n"
+        "\n"
+        "def test_sleeps():\n"
+        "    print('starting', file=sys.stderr, flush=True)\n"
+        "    time.sleep(30)\n",
+    )
 
     result = run_pytest(tmp_path, "test_slow.py", timeout_sec=1.0)
 
     assert result["passed"] is False
     assert result["exit_code"] is None
     assert "timeout" in result["summary"]
+    # The regression was a TypeError while concatenating the captured streams, so the
+    # contract under test is "a str comes back", not "the child's text survives".
+    # pytest captures the test function's own stderr, so only plugin-level output
+    # reaches the pipe before the timeout fires.
+    assert isinstance(result["output"], str)
 
 
 def test_target_outside_the_workspace_is_rejected(tmp_path: Path) -> None:
@@ -84,3 +100,11 @@ def test_long_output_is_clipped(tmp_path: Path) -> None:
 
     assert result["passed"] is True
     assert len(str(result["output"])) <= MAX_OUTPUT_CHARS + 80
+
+
+def test_decode_normalises_the_timeout_stream_types() -> None:
+    # subprocess reports captured output as bytes on the timeout path even with
+    # text=True. This guard is platform-independent, unlike the timeout test above.
+    assert _decode(b"warning on stderr") == "warning on stderr"
+    assert _decode(None) == ""
+    assert _decode("already text") == "already text"

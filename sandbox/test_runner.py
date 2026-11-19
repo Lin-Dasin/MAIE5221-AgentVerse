@@ -48,6 +48,21 @@ def _clip(text: str) -> str:
     return text[:MAX_OUTPUT_CHARS] + f"\n... truncated {len(text) - MAX_OUTPUT_CHARS} characters"
 
 
+def _decode(value: str | bytes | None) -> str:
+    """Normalise a captured stream from `TimeoutExpired`.
+
+    `subprocess` reports captured output as raw bytes on the timeout path even when
+    `text=True` is set, because `_check_timeout()` joins the pipe buffers directly.
+    Decoding has to happen before concatenation: mixing a `bytes` stream with a `str`
+    one raises `TypeError` inside the error handler.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
 def _summary(output: str, exit_code: int | None) -> str:
     """Last meaningful line of pytest output, which is where it states the counts."""
     if exit_code == NO_TESTS_EXIT_CODE:
@@ -137,9 +152,7 @@ def run_pytest(
             env=_env(workspace),
         )
     except subprocess.TimeoutExpired as exc:
-        partial = (exc.stdout or "") + (exc.stderr or "")
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", errors="replace")
+        partial = _decode(exc.stdout) + _decode(exc.stderr)
         return _result(
             passed=False,
             exit_code=None,
