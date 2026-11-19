@@ -4,10 +4,12 @@ import json
 
 from pydantic import ValidationError
 
+from orchestrator.preflight import PlanPreflight
 from protocol.models import (
     AcceptanceRule,
     AgentProfile,
     ChatMessage,
+    ModelResponse,
     RoleBid,
     RunConfig,
     TaskGraph,
@@ -21,11 +23,14 @@ class PlanningError(ValueError):
 
 
 class Planner:
-    def __init__(self, model: ModelClient, profile: AgentProfile):
+    def __init__(
+        self, model: ModelClient, profile: AgentProfile, *, preflight: PlanPreflight | None = None
+    ):
         if profile.role != "planner":
             raise ValueError("planner requires a planner profile")
         self.model = model
         self.profile = profile
+        self.preflight = preflight or PlanPreflight()
 
     async def plan(
         self,
@@ -42,10 +47,12 @@ class Planner:
         worker_ids = {worker.agent_id for worker in workers}
         if len(worker_ids) != len(workers):
             raise PlanningError("worker profile IDs must be unique")
+        if goal_acceptance is not None:
+            self.preflight.check_rules(goal_acceptance, "required goal acceptance")
         calls = 0
         tokens = 0
 
-        async def ask(messages: list[ChatMessage]) -> str:
+        async def ask(messages: list[ChatMessage]) -> ModelResponse:
             nonlocal calls, tokens
             if calls >= config.max_planning_calls or tokens >= config.max_task_tokens:
                 raise PlanningError("planning budget exhausted")
@@ -58,7 +65,7 @@ class Planner:
             tokens += response.tokens
             if response.tool_calls or tokens > config.max_task_tokens:
                 raise PlanningError("planning returned tool calls or exceeded its token budget")
-            return response.content
+            return response
 
         messages = [
             ChatMessage(
@@ -69,6 +76,9 @@ class Planner:
                 "Inputs name accepted upstream artifacts relative to their archive root. "
                 "Task acceptance paths are workspace-relative; goal acceptance paths are "
                 "relative to the final task's archive (without outputs/). "
+                "Every input must match a declared upstream output after removing outputs/. "
+                "Final outputs must cover all required goal file checks. "
+                "Use only the supplied supported_acceptance_types. "
                 "Use summary to explain role assignments. No tools may be executed in planning.",
             ),
             ChatMessage(
@@ -79,6 +89,9 @@ class Planner:
                         "workers": [worker.model_dump() for worker in workers],
                         "memory_context": memory_context if config.memory_enabled else "",
                         "max_tasks": config.max_tasks,
+                        "supported_acceptance_types": sorted(
+                            self.preflight.supported_acceptance_types
+                        ),
                         "required_goal_acceptance": (
                             [rule.model_dump() for rule in goal_acceptance]
                             if goal_acceptance is not None
@@ -91,8 +104,10 @@ class Planner:
         ]
 
         async def generate() -> TaskGraph:
+            last_error = ""
             for _ in range(2):
-                text = await ask(messages)
+                response = await ask(messages)
+                text = response.content
                 try:
                     candidate = TaskGraph.model_validate_json(extract_json(text))
                     if len(candidate.tasks) > config.max_tasks or any(
@@ -101,15 +116,21 @@ class Planner:
                         raise ValueError("invalid task count, depth or worker assignment")
                     if goal_acceptance is not None:
                         candidate.goal_acceptance = goal_acceptance
+                    self.preflight.validate(candidate, config)
                     return candidate
                 except (ValueError, ValidationError) as exc:
+                    last_error = str(exc)
                     messages.extend(
                         [
-                            ChatMessage(role="assistant", content=text),
+                            ChatMessage(
+                                role="assistant",
+                                content=text,
+                                reasoning_content=response.reasoning_content,
+                            ),
                             ChatMessage(role="user", content=f"Repair this invalid plan: {exc}"),
                         ]
                     )
-            raise PlanningError("planner could not produce a valid task graph")
+            raise PlanningError(f"planner could not produce a valid task graph: {last_error}")
 
         graph = await generate()
         if not negotiate:
@@ -119,7 +140,7 @@ class Planner:
             # Reserve two calls for final planning and one possible schema repair.
             if config.max_planning_calls - calls < 3:
                 break
-            text = await ask(
+            response = await ask(
                 [
                     ChatMessage(
                         role="system",
@@ -140,7 +161,7 @@ class Planner:
                 ]
             )
             try:
-                bid = RoleBid.model_validate_json(extract_json(text))
+                bid = RoleBid.model_validate_json(extract_json(response.content))
                 if not set(bid.task_ids) <= {task.task_id for task in graph.tasks}:
                     raise ValueError("bid contains unknown task IDs")
             except ValueError:

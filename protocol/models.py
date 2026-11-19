@@ -305,12 +305,14 @@ class ChatMessage(Contract):
     content: str = ""
     tool_call_id: str | None = None
     tool_calls: list[ToolCall] = Field(default_factory=list)
+    reasoning_content: str | None = Field(default=None, repr=False)
 
 
 class ModelResponse(Contract):
     content: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tokens: int = Field(default=0, ge=0)
+    reasoning_content: str | None = Field(default=None, repr=False)
 
 
 class RoleBid(Contract):

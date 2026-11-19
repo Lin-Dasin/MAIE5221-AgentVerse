@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestrator.artifacts import ArtifactStore
+from orchestrator.preflight import PlanPreflight
 from protocol.models import (
     AgentOutcome,
     ExecutionContext,
@@ -45,6 +46,7 @@ class Scheduler:
         root: Path,
         memory: Memory | None = None,
         observer: Observer | None = None,
+        preflight: PlanPreflight | None = None,
     ):
         self.worker = worker
         self.verifier = verifier
@@ -52,13 +54,13 @@ class Scheduler:
         self.root = root
         self.memory = memory
         self.observer = observer
+        self.preflight = preflight or PlanPreflight()
         self._running = False
 
     async def run(self, graph: TaskGraph, config: RunConfig) -> RunResult:
         if self._running:
             raise RuntimeError("one scheduler owns one serial workspace run at a time")
-        if len(graph.tasks) > config.max_tasks or any(task.depth for task in graph.tasks):
-            raise ValueError("initial graph must fit the task budget and contain depth-0 tasks")
+        self.preflight.validate(graph, config)
         if config.write_memory and self.memory is None:
             raise ValueError("write_memory requires a Role C adapter")
         self._running = True
@@ -345,6 +347,7 @@ class Scheduler:
             goal_acceptance=self.graph.goal_acceptance,
             summary=self.graph.summary,
         )
+        self.preflight.validate(graph, self.config, initial=False)
         self.store.suspend(record.task)
         self.graph = graph
         for child in children:

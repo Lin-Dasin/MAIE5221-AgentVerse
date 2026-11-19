@@ -4,8 +4,10 @@ A multi-agent collaboration platform. A user states a goal in natural language; 
 
 ## Target capabilities
 
-These describe the intended platform. The local implementation currently contains
-Role A's offline core; production B/C/D adapters and full integration remain pending.
+These describe the intended platform. The repository includes A's orchestration
+core and B/C/D tools, memory, file verification, tracing and offline evaluation
+adapters. Containers, Git tools, chat routing/UI and full live evaluation remain
+integration work.
 
 - Decomposes a single high-level goal into a task graph with explicit dependencies, where every subtask carries machine-checkable acceptance criteria
 - Distributes work across heterogeneous agents: a Planner plans and delegates, Workers execute with tools inside their own sandboxes, and a Critic verifies results against the criteria, sending failing work back with a defect list
@@ -44,9 +46,9 @@ Project structure and cross-module contracts: [docs/overview.md](docs/overview.m
 ## Role A core: local development
 
 The task contracts, planner, serial scheduler, Agent runtime, HITL gates and
-artifact handoffs now have an offline implementation. B/C/D production adapters
-are still required for the complete platform. No live evaluation results are
-claimed by the offline tests.
+artifact handoffs are implemented with shared plan preflight and a configurable
+DeepSeek client. Tests cover synthetic model responses and real local adapters;
+their results do not establish live-model performance.
 
 ```bash
 python3 -m venv .venv
@@ -56,8 +58,13 @@ python -m pytest -q
 ruff check .
 ```
 
-Use Python 3.11 or later. Tests use temporary workspaces and scripted model,
-tool, memory and verdict fixtures; they require neither API keys nor Docker.
+Use Python 3.11 or later. Tests use temporary workspaces and mocked model calls;
+they require neither API keys nor Docker.
+
+After exporting model credentials, `python -m scripts.live_smoke` runs a real
+search/file workflow. `LLM_THINKING` defaults to `disabled`; both the script and
+service use `runtime/client.py`. See the [integration guide](docs/usage-and-integration.md)
+for a file-only command and the supported plan/acceptance contracts.
 
 The entry point for D's CLI/harness is
 `orchestrator.service.CollaborationService.run_goal(goal, config)`.

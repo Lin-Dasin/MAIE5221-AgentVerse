@@ -2,6 +2,69 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-11 — Role A: Shared Model Client and Executable Plan Preflight
+
+Two integration defects were prioritized: the live smoke script duplicated the
+model client and bypassed its retry policy, and inconsistent artifact references
+were discovered only after paid execution. In particular, the script checked
+`outputs/notes.md` against an archive containing `notes.md`.
+
+### Changes
+
+- `DeepSeekClient` owns `thinking="disabled"|"enabled"`, also read from
+  `LLM_THINKING` with default `disabled`. Requests explicitly send this mode.
+  Optional `reasoning_content` fields in `ChatMessage`/`ModelResponse` preserve
+  provider assistant history through tool/approval/delegation turns and Planner
+  repair. Enabled requests replay the field; disabled requests omit it. Existing
+  adapter method signatures and bounded transient retries remain intact.
+- The smoke probe and workflow use the production client. Removed
+  `NoThinkingClient`, raw error-body output and duplicate HTTP serialization.
+  The script now calls `run_goal()`, retains graph/trace output and always closes
+  its client. Final file acceptance uses archive-relative `notes.md`.
+- Added shared `PlanPreflight` to planning, fixed-graph execution and child
+  insertion. It checks graph/budget contracts, registered Workers when configured,
+  input references against upstream published outputs, goal file checks against
+  final outputs, and supported acceptance-rule types. Publication and preflight
+  share `archive_path()` to preserve nested paths and remove one `outputs/` prefix.
+- Both draft and negotiated plans can repair contract errors within existing
+  call/token limits. Unsupported dataset rules fail before any model call;
+  supplied goal criteria are not weakened or rewritten. Fixed invalid graphs fail
+  before workspace/Worker side effects; invalid children do not enter the graph.
+  Planning failure records retain the diagnostic needed to identify the bad path.
+- `build_service(supported_acceptance_types=...)` explicitly declares the supplied
+  verifier's implementation. Defaults match D's `FileVerifier`: `file_exists`
+  and `text_contains`. `pytest_passes` still needs B/D's isolated implementation.
+  This change adds no tool, memory-store or verdict implementation in A's modules.
+- Updated the integration/setup guides, architecture overview, Section 2,
+  Role A's integration reference, README and environment example. Corrected stale
+  claims that all B/C/D adapters were missing. Team review and integration remain
+  separate from publishing the Role A branch.
+
+### Validation
+
+Reproduce from the repository root after installing `.[dev]`:
+
+```bash
+python -m pytest -q
+ruff check .
+python -m scripts.live_smoke --help
+python -m harness.run --suite offline-smoke --mock \
+  --work-dir results/role-a-regression/work --output results/role-a-regression/report.json
+git diff --check
+```
+
+- Full local suite: **156 passed** (131 existing plus 25 new cases).
+- Ruff and whitespace checks passed; the smoke entry point imports and shows help.
+- New coverage includes thinking configuration, reasoning replay after approval,
+  bounded HTTP retries, malformed envelopes, draft/negotiated plan repair,
+  authoritative dataset rules, rejection before execution, and invalid child
+  insertion. The smoke-script regression uses mocked HTTP with B's actual file
+  tool and D's actual verifier/JSONL trace, checking the final archived file.
+- Offline harness: **3/6 goals, 6/10 subtasks**, unchanged from the deliberately
+  mixed success/failure fixture baseline. These are not real-model completion rates.
+- No live model/search API calls or formal dataset evaluations were performed.
+  Provider compatibility and performance still require credentialed live runs.
+
 ## 2026-10-29 — Documentation and Interface Alignment, Integration Guide and Shared Assembly Entry Point
 
 Background: comparing the course specification, the project-plan attachment and the current Role A code revealed inconsistencies in memory interfaces, paths, progress-record locations, some status descriptions and official evaluation arrangements. Cross-role documentation was aligned at the user's request and awaits normal team PR review.

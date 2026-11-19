@@ -27,6 +27,11 @@ from protocol.models import (
 
 
 class ModelClient(Protocol):
+    """Provider adapters may return reasoning_content for assistant-history replay.
+
+    It is optional for existing adapters and is not a task summary or verdict.
+    """
+
     async def complete(
         self, messages: list[ChatMessage], tools: list[ToolDefinition], *, max_tokens: int
     ) -> ModelResponse: ...

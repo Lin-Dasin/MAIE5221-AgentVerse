@@ -113,8 +113,12 @@ Collaboration follows the `Role_A → develop → main` PR workflow, requires at
 
 Use [the integration guide](../usage-and-integration.md) and the exact signatures
 in `protocol/ports.py`. A provides `orchestrator.bootstrap.build_service()` for D
-to assemble the service with B/C/D adapters. The first live integration remains
-pending. A must still coordinate chat entry points, Planner memory and the Critic
-agent lifecycle; current Worker hooks and deterministic verdicts do not complete
-those requirements. Weekly progress evidence lives in PRs/tracking issues, not a
-separate weekly-report directory.
+to assemble the service with B/C/D adapters. B's file/search tools, C's JSONL memory
+and profiles, and D's file verifier/traces/offline harness are present. The
+2026-11-11 A changes unify thinking/reasoning handling in the production client
+and add plan preflight for artifact references and configured rule support. The
+smoke script reuses that client and checks the correct final archive path. See
+[the changelog](../changelog.md) for regression evidence; no new live API result
+is claimed. A must still coordinate chat entry points, Planner memory and the
+Critic agent lifecycle. Weekly progress evidence lives in PRs/tracking issues,
+not a separate weekly-report directory.

@@ -11,7 +11,7 @@ Usage:
     export LLM_MODEL=deepseek-flash
     export SEARCH_API_KEY=tvly-...        # only needed for goals that search
 
-    python scripts/live_smoke.py
+    python -m scripts.live_smoke
 
 Nothing loads .env automatically, so the variables must be exported.
 """
@@ -20,13 +20,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
-
-import httpx
 
 from bus.trace import TRACE_FILENAME, JsonlTrace, TracingToolExecutor
 from harness.verdict import FileVerifier
@@ -35,10 +31,7 @@ from orchestrator.bootstrap import build_service
 from protocol.models import (
     AcceptanceRule,
     ChatMessage,
-    ModelResponse,
     RunConfig,
-    ToolCall,
-    ToolDefinition,
 )
 from runtime.client import DeepSeekClient, ModelCallError
 from runtime.profiles import load_profiles
@@ -48,97 +41,13 @@ from tools.registry import build, definitions
 REQUIRED_ENV = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")
 
 
-class NoThinkingClient(DeepSeekClient):
-    """`DeepSeekClient` with thinking mode switched off.
-
-    Temporary shim until `runtime/client.py` owns this switch. DeepSeek enables
-    thinking by default, and once a request carries `tools`, every later turn
-    must echo `reasoning_content` back. `ChatMessage` has no such field, so an
-    agent's second model call would fail with HTTP 400. Disabling thinking
-    removes the requirement and keeps output tokens low.
-
-    Differences from the parent, both deliberate for a smoke test: no retry
-    loop, and non-200 responses include a slice of the body in the message.
-    """
-
-    async def complete(
-        self, messages: list[ChatMessage], tools: list[ToolDefinition], *, max_tokens: int
-    ) -> ModelResponse:
-        if max_tokens < 1:
-            raise ValueError("max_tokens must be positive")
-
-        wire_messages = []
-        for message in messages:
-            wire: dict = {"role": message.role, "content": message.content}
-            if message.tool_call_id:
-                wire["tool_call_id"] = message.tool_call_id
-            if message.tool_calls:
-                wire["tool_calls"] = [
-                    {
-                        "id": call.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": call.name,
-                            "arguments": json.dumps(call.arguments),
-                        },
-                    }
-                    for call in message.tool_calls
-                ]
-            wire_messages.append(wire)
-
-        payload: dict = {
-            "model": self.model,
-            "messages": wire_messages,
-            "max_tokens": max_tokens,
-            "stream": False,
-            "thinking": {"type": "disabled"},
-        }
-        if tools:
-            payload["tools"] = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters,
-                    },
-                }
-                for tool in tools
-            ]
-
-        response = await self.http.post(
-            self.url, headers={"Authorization": f"Bearer {self.api_key}"}, json=payload
-        )
-        if response.status_code != 200:
-            detail = response.text[:300]
-            raise ModelCallError(f"Model request returned HTTP {response.status_code}: {detail}")
-
-        body = response.json()
-        choice = body["choices"][0]
-        if choice.get("finish_reason") == "length":
-            raise ModelCallError(
-                "Model output exceeded the response limit; raise --max-output-tokens"
-            )
-        message = choice["message"]
-        return ModelResponse(
-            content=message.get("content") or "",
-            tool_calls=[
-                ToolCall(
-                    call_id=call["id"],
-                    name=call["function"]["name"],
-                    arguments=json.loads(call["function"]["arguments"]),
-                )
-                for call in message.get("tool_calls") or []
-            ],
-            tokens=body.get("usage", {}).get("total_tokens", 0),
-        )
-
 DEFAULT_GOAL = (
     "Search the web for the official release date of Python 3.13 and write a short note "
     "to outputs/notes.md. The note must name the release date and include the source URL."
 )
 
-FINAL_ARTIFACT = "outputs/notes.md"
+# Goal verification runs against the archive, which strips one outputs/ prefix.
+FINAL_ARTIFACT = "notes.md"
 
 
 def check_environment() -> None:
@@ -156,38 +65,23 @@ def check_environment() -> None:
         )
 
 
-async def preflight(client: DeepSeekClient) -> bool:
-    """Send one minimal request and print the raw answer.
-
-    `runtime/client.py` turns every non-200 into a message that carries only the
-    status code, so a 404 "Model Not Exist" and a 400 "invalid request" look the
-    same from the outside. This prints the body so the cause is visible.
-    """
+async def preflight(client: DeepSeekClient, *, max_tokens: int = 256) -> bool:
+    """Probe the same configured client used by planning and execution."""
     print(f"endpoint    : {client.url}")
     print(f"model       : {client.model}")
-    payload = {
-        "model": client.model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 8,
-    }
-    headers = {"Authorization": f"Bearer {client.api_key}"}
+    print(f"thinking    : {client.thinking}")
     try:
-        async with httpx.AsyncClient(timeout=30.0) as probe:
-            response = await probe.post(client.url, headers=headers, json=payload)
-    except httpx.HTTPError as exc:
-        print(f"preflight   : network error {type(exc).__name__}: {exc}", file=sys.stderr)
-        return False
-
-    if response.status_code != 200:
-        print(f"preflight   : HTTP {response.status_code}", file=sys.stderr)
-        print(f"body        : {response.text[:600]}", file=sys.stderr)
+        await client.complete(
+            [ChatMessage(role="user", content="Reply with OK.")], [], max_tokens=max_tokens
+        )
+    except ModelCallError as exc:
+        print(f"preflight   : {exc}", file=sys.stderr)
         print(
             "hints       : 401 key wrong, 402 balance empty, 404 model id not served, "
-            "400 malformed request",
+            "400 malformed request; check LLM_THINKING and the output budget",
             file=sys.stderr,
         )
         return False
-
     print("preflight   : OK")
     return True
 
@@ -195,8 +89,24 @@ async def preflight(client: DeepSeekClient) -> bool:
 async def run(
     goal: str, root: Path, max_steps: int, max_output_tokens: int, max_task_tokens: int
 ) -> int:
-    client = NoThinkingClient.from_environment()
-    print("client      : NoThinkingClient (thinking disabled, temporary shim)")
+    client = DeepSeekClient.from_environment()
+    try:
+        return await _run_with_client(
+            client, goal, root, max_steps, max_output_tokens, max_task_tokens
+        )
+    finally:
+        await client.aclose()
+
+
+async def _run_with_client(
+    client: DeepSeekClient,
+    goal: str,
+    root: Path,
+    max_steps: int,
+    max_output_tokens: int,
+    max_task_tokens: int,
+) -> int:
+    print("client      : DeepSeekClient")
     registry = build()
     trace = JsonlTrace(root / TRACE_FILENAME)
     executor = TracingToolExecutor(SandboxToolExecutor(root, registry), trace)
@@ -219,43 +129,21 @@ async def run(
         # Real research tasks spent 15-17k tokens per task, so the 16k default
         # trips on ordinary variance. Raise it rather than shortening the task.
         max_task_tokens=max_task_tokens,
-        # Thinking mode is on by default and its tokens count as output, so the
-        # default 2048 budget can be exhausted before the answer is written.
+        # When enabled, thinking also consumes the output-token budget.
         max_output_tokens=max_output_tokens,
         task_timeout_sec=240.0,
         approval_timeout_sec=60.0,
     )
     goal_acceptance = [AcceptanceRule(type="file_exists", path=FINAL_ARTIFACT)]
 
-    if not await preflight(client):
-        await client.aclose()
+    if not await preflight(client, max_tokens=max_output_tokens):
         return 2
 
-    started = datetime.now(UTC)
-    try:
-        graph = await service.planner.plan(
-            goal,
-            service.workers,
-            config,
-            memory_context="",
-            goal_acceptance=goal_acceptance,
-        )
-    except Exception as exc:  # noqa: BLE001 - a smoke script must show the cause
-        print(f"planning    : {type(exc).__name__}: {exc}", file=sys.stderr)
-        await client.aclose()
-        return 1
-
-    print(f"graph       : {len(graph.tasks)} task(s)")
-    graph_path = root / f"graph-{config.run_id}.json"
-    graph_path.write_text(graph.model_dump_json(indent=2), encoding="utf-8")
-    print(f"graph file  : {graph_path}")
-    try:
-        result = await service.run_graph(graph, config)
-    finally:
-        await client.aclose()
-    result.started_at = started
-    if result.graph is None:
-        result.graph = graph
+    result = await service.run_goal(goal, config, goal_acceptance=goal_acceptance)
+    if result.graph is not None:
+        graph_path = root / f"graph-{config.run_id}.json"
+        graph_path.write_text(result.graph.model_dump_json(indent=2), encoding="utf-8")
+        print(f"graph file  : {graph_path}")
 
     print("=" * 62)
     print(f"run_id      : {result.run_id}")
