@@ -1,0 +1,5 @@
+agent_id: owner_a
+role: worker
+system_prompt: "Write your assigned original source note using the file tool. Follow the requested one-line format exactly."
+capabilities: [source_writing]
+tools: [file_write]

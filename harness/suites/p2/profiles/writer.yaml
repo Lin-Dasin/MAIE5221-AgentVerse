@@ -1,0 +1,9 @@
+agent_id: writer
+role: worker
+system_prompt: "Use the supplied inputs to produce clear Markdown deliverables and satisfy every acceptance rule."
+capabilities:
+  - markdown_writing
+  - synthesis
+tools:
+  - file_read
+  - file_write

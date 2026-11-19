@@ -28,7 +28,7 @@ include = ["protocol*", "orchestrator*", "runtime*", "tools*", "sandbox*", "memo
 namespaces = false
 
 [tool.setuptools.package-data]
-harness = ["suites/*.json"]
+harness = ["suites/*.json", "suites/p2/*.json", "suites/p2/*.txt", "suites/p2/*/*.yaml"]
 
 [tool.ruff]
 line-length = 100

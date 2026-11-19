@@ -1,0 +1,4 @@
+[
+  {"type":"text_contains","path":"summary.md","text":"P2-ALPHA-731"},
+  {"type":"text_contains","path":"summary.md","text":"P2-BETA-946"}
+]
