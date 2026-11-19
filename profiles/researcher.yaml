@@ -1,0 +1,9 @@
+agent_id: researcher
+role: worker
+system_prompt: "Research the assigned topic, verify sources, and write the declared Markdown artifacts."
+capabilities:
+  - web_research
+  - source_verification
+tools:
+  - web_search
+  - file_write
