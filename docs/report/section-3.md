@@ -15,6 +15,7 @@ open. The code it describes is `sandbox/` and `tools/`.
 | Code execution | Implemented, subprocess backend | `tools/code_exec.py` |
 | Web search | Implemented, Tavily adapter | `tools/web_search.py` |
 | Git tools (commit, push) | Implemented | `tools/git.py` |
+| Verifier-side pytest runner | Implemented, not yet wired | `sandbox/test_runner.py` |
 | Container isolation | **Not implemented** | planned, `docker/` |
 | Memory cap for generated code | **Not implemented** | see limits |
 | Process-tree cleanup | **Not implemented** | see limits |
@@ -142,6 +143,27 @@ never has to parse prose to find a commit id or an exit code. Two tools carry
 `requires_approval`, both because the action cannot be undone by the run that performed
 it: deleting a file, and pushing to a remote.
 
+### Verifier-side test execution
+
+`pytest_passes` is an acceptance rule, not an agent capability, so its runner lives in
+`sandbox/test_runner.py` and is deliberately **not** registered as a tool: handing the
+agent a "run these tests" tool would let it observe and tune against the check.
+
+```python
+run_pytest(workspace, target=".", *, timeout_sec=60.0) -> {
+    "passed": bool, "exit_code": int | None, "summary": str,
+    "output": str, "duration_sec": float,
+}
+```
+
+It keeps the same three properties as the tool layer: the target is validated by
+`resolve_within`, the run has a wall-clock limit, and it never raises — a timeout
+returns `exit_code: None` with `summary: "timeout after Ns"`, and collecting zero tests
+returns exit code 5 with `summary: "no tests collected"` rather than a silent pass.
+
+The verifier still rejects `pytest_passes` today; this runner is the piece it needs to
+stop rejecting it.
+
 Two behaviours are worth stating because they are easy to get wrong:
 
 - **A failing program is not a failing tool.** `code_exec` returns `ok=True` with
@@ -221,7 +243,7 @@ that is the verifier's job, not the sandbox's.
 
 At the time of writing:
 
-- `pytest -q` → **249 passed, 3 skipped**. The three skips are symlink cases that need
+- `pytest -q` → **256 passed, 3 skipped**. The three skips are symlink cases that need
   Windows Developer Mode; they run on CI.
 - `ruff check .` → clean.
 - Live two-task run (`research` → `write`) against the real API: both tasks succeeded,
