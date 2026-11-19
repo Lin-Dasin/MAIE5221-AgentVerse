@@ -32,6 +32,7 @@ from protocol.models import (
     AcceptanceRule,
     ChatMessage,
     RunConfig,
+    TaskGraph,
 )
 from runtime.client import DeepSeekClient, ModelCallError
 from runtime.profiles import load_profiles
@@ -87,12 +88,17 @@ async def preflight(client: DeepSeekClient, *, max_tokens: int = 256) -> bool:
 
 
 async def run(
-    goal: str, root: Path, max_steps: int, max_output_tokens: int, max_task_tokens: int
+    goal: str,
+    root: Path,
+    max_steps: int,
+    max_output_tokens: int,
+    max_task_tokens: int,
+    graph_file: Path | None = None,
 ) -> int:
     client = DeepSeekClient.from_environment()
     try:
         return await _run_with_client(
-            client, goal, root, max_steps, max_output_tokens, max_task_tokens
+            client, goal, root, max_steps, max_output_tokens, max_task_tokens, graph_file
         )
     finally:
         await client.aclose()
@@ -105,6 +111,7 @@ async def _run_with_client(
     max_steps: int,
     max_output_tokens: int,
     max_task_tokens: int,
+    graph_file: Path | None = None,
 ) -> int:
     print("client      : DeepSeekClient")
     registry = build()
@@ -139,7 +146,12 @@ async def _run_with_client(
     if not await preflight(client, max_tokens=max_output_tokens):
         return 2
 
-    result = await service.run_goal(goal, config, goal_acceptance=goal_acceptance)
+    if graph_file is not None:
+        graph = TaskGraph.model_validate_json(graph_file.read_text(encoding="utf-8"))
+        print(f"graph source: {graph_file} ({len(graph.tasks)} tasks, planning skipped)")
+        result = await service.run_graph(graph, config)
+    else:
+        result = await service.run_goal(goal, config, goal_acceptance=goal_acceptance)
     if result.graph is not None:
         graph_path = root / f"graph-{config.run_id}.json"
         graph_path.write_text(result.graph.model_dump_json(indent=2), encoding="utf-8")
@@ -203,6 +215,11 @@ def main(argv: list[str] | None = None) -> int:
         default=60000,
         help="per-task token budget; the 16000 default is tight for real research",
     )
+    parser.add_argument(
+        "--graph",
+        type=Path,
+        help="run a fixed task graph JSON instead of planning; isolates execution from planning",
+    )
     args = parser.parse_args(argv)
 
     check_environment()
@@ -217,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.max_steps,
                 args.max_output_tokens,
                 args.max_task_tokens,
+                args.graph,
             )
         )
     except KeyboardInterrupt:

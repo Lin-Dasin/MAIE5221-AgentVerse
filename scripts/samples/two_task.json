@@ -1,0 +1,61 @@
+{
+  "tasks": [
+    {
+      "task_id": "research",
+      "title": "Use web_search to find the official release date of Python 3.13, then write a short note with the source URL to outputs/research.md",
+      "assignee": "researcher",
+      "parent_task": null,
+      "depth": 0,
+      "depends_on": [],
+      "inputs": [],
+      "acceptance": [
+        {
+          "type": "file_exists",
+          "path": "outputs/research.md",
+          "text": null
+        }
+      ],
+      "outputs": [
+        "outputs/research.md"
+      ],
+      "max_retries": 2
+    },
+    {
+      "task_id": "write",
+      "title": "Read inputs/research.md and write a two-line note to outputs/notes.md that states the release date and cites the source URL",
+      "assignee": "writer",
+      "parent_task": null,
+      "depth": 0,
+      "depends_on": [
+        "research"
+      ],
+      "inputs": [
+        {
+          "from_task": "research",
+          "path": "research.md",
+          "destination": "inputs/research.md"
+        }
+      ],
+      "acceptance": [
+        {
+          "type": "file_exists",
+          "path": "outputs/notes.md",
+          "text": null
+        }
+      ],
+      "outputs": [
+        "outputs/notes.md"
+      ],
+      "max_retries": 2
+    }
+  ],
+  "final_task_id": "write",
+  "goal_acceptance": [
+    {
+      "type": "file_exists",
+      "path": "notes.md",
+      "text": null
+    }
+  ],
+  "summary": ""
+}
