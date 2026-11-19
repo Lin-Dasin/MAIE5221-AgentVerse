@@ -221,7 +221,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     except KeyboardInterrupt:
         return 130
-    except Exception as exc:  # noqa: BLE001 - a smoke script should print, not traceback
+    except Exception as exc:  # noqa: BLE001 - a smoke script diagnoses, it does not recover
+        if os.environ.get("SMOKE_DEBUG"):
+            import traceback
+
+            traceback.print_exc()
         print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
 
