@@ -25,7 +25,15 @@ def test_hits_and_language_totals_match_retrieved_text():
         assert summary["total"] == len(language_rows)
         assert summary["hits"] == sum(row["hit"] for row in language_rows)
     assert report["summary"]["en"]["total"] == report["summary"]["zh"]["total"]
-    assert report["summary"]["en"]["hits"] > 0  # English positive control.
+    assert report["max_records"] == 1
+    assert report["retrieval_policy"] == "deterministic token-overlap top-one retrieval"
+    assert report["hit_policy"] == (
+        "the single returned record contains the case's expected advice marker"
+    )
+    assert all(
+        report["summary"][language]["hits"] == report["summary"][language]["total"]
+        for language in ("en", "zh")
+    )
 
 
 def test_retrieving_an_unrelated_memory_is_a_miss(monkeypatch):

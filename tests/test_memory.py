@@ -8,10 +8,14 @@ from protocol.models import AcceptanceRule, FailureCode, Task, TaskResult, TaskS
 from runtime.profiles import load_profiles
 
 
-def make_task(task_id: str = "research-1", agent: str = "researcher") -> Task:
+def make_task(
+    task_id: str = "research-1",
+    agent: str = "researcher",
+    title: str = "Research competitor pricing with official sources",
+) -> Task:
     return Task(
         task_id=task_id,
-        title="Research competitor pricing with official sources",
+        title=title,
         assignee=agent,
         acceptance=[
             AcceptanceRule(type="text_contains", path="outputs/pricing.md", text="Sources")
@@ -90,6 +94,28 @@ async def test_retrieval_is_bounded_to_three_records(tmp_path):
     text = await memory.retrieve("researcher", task)
     assert text.count("Previous success task") == 3
     assert len(text) <= 2400
+
+
+@pytest.mark.asyncio
+async def test_chinese_query_ranks_the_related_private_reflection_first(tmp_path):
+    memory = JsonlMemory(tmp_path, max_records=1)
+    seed_cases = [
+        ("invoice", "核对发票总额", "先逐项比对再四舍五入。"),
+        ("backup", "验证备份完整性", "签字前先还原一份样本。"),
+        ("schedule", "核对轮班安排", "发布前先比对交班时间。"),
+    ]
+    for task_id, title, advice in seed_cases:
+        seed = make_task(task_id, title=title)
+        result = make_result(seed, status=TaskStatus.SUCCESS)
+        result.summary = advice
+        await memory.reflect(seed, result)
+
+    query = make_task("invoice-query", title="重新核对发票总额")
+    text = await memory.retrieve("researcher", query)
+
+    assert "先逐项比对再四舍五入。" in text
+    assert "签字前先还原一份样本。" not in text
+    assert "发布前先比对交班时间。" not in text
 
 
 def test_profiles_load_from_repository():

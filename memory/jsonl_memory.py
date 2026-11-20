@@ -11,7 +11,8 @@ from memory.models import MemoryRecord
 from protocol.models import Task, TaskResult
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+_ASCII_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+_CJK_RUN = re.compile(r"[\u3400-\u9fff]+")
 
 
 class JsonlMemory:
@@ -69,7 +70,20 @@ class JsonlMemory:
 
     @staticmethod
     def _tokens(value: str) -> set[str]:
-        return {token.lower() for token in _TOKEN.findall(value) if len(token) > 1}
+        """Extract stable English words and overlapping CJK bigrams.
+
+        The initial ASCII-only tokenizer discarded Chinese task titles entirely.
+        Character bigrams give related Chinese titles shared topic terms without
+        adding a language-specific segmentation dependency. A one-character run
+        is retained as one token so valid short labels are not lost.
+        """
+        tokens = {token.lower() for token in _ASCII_TOKEN.findall(value) if len(token) > 1}
+        for run in _CJK_RUN.findall(value):
+            if len(run) == 1:
+                tokens.add(run)
+            else:
+                tokens.update(run[index : index + 2] for index in range(len(run) - 1))
+        return tokens
 
     @staticmethod
     def _task_text(task: Task) -> str:
