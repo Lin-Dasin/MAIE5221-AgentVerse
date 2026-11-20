@@ -35,7 +35,8 @@ deterministic acceptance port; a separate conversational Critic agent is still
 planned. Worker memory hooks exist; Planner automatic memory and Critic lifecycle
 remain A/C integration work. Private/group chat routing remains A/D integration
 work. B/C/D file/search tools, JSONL memory/profiles, file verdicts, traces and the
-offline harness are present; containers and Git tools remain incomplete.
+offline harness are present. Git tools are tested against a local bare repository;
+container isolation and hosted Git evaluation remain incomplete.
 
 ## 3. Execution pipeline
 

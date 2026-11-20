@@ -14,13 +14,16 @@ from protocol.models import (
     ExecutionContext,
     FailureCode,
     HITLRequest,
+    MemoryEvent,
+    MemoryPhase,
     Task,
     ToolCall,
     ToolDefinition,
     ToolResult,
 )
-from protocol.ports import Memory, ModelClient, ToolExecutor
+from protocol.ports import Memory, MemoryObserver, ModelClient, ToolExecutor
 from runtime.client import ModelCallError
+from runtime.memory_events import ContextMetadata, context_metadata, notify_memory
 
 
 class DelegateArguments(Contract):
@@ -55,6 +58,7 @@ class _Session:
     pending: ToolCall | None = None
     request: HITLRequest | None = None
     queue: list[ToolCall] = field(default_factory=list)
+    memory_metadata: ContextMetadata | None = None
 
 
 class AgentRuntime:
@@ -66,6 +70,7 @@ class AgentRuntime:
         tools: list[ToolDefinition],
         *,
         memory: Memory | None = None,
+        memory_observer: MemoryObserver | None = None,
     ):
         self.model = model
         self.executor = executor
@@ -77,6 +82,7 @@ class AgentRuntime:
             if key != profile.agent_id or not set(profile.tools) <= self.tools.keys():
                 raise ValueError("profile identifiers and tool names must match the registry")
         self.memory = memory
+        self.memory_observer = memory_observer
         self.sessions: dict[tuple[str, str, int], _Session] = {}
 
     def release(self, run_id: str, task_id: str) -> None:
@@ -97,6 +103,32 @@ class AgentRuntime:
             return ToolResult(ok=False, error=f"Tool execution failed: {type(exc).__name__}")
 
     async def execute(self, task: Task, context: ExecutionContext) -> AgentOutcome:
+        warnings: list[str] = []
+        outcome = await self._execute(task, context, warnings)
+        outcome.warnings.extend(warnings)
+        return outcome
+
+    async def _execute(
+        self, task: Task, context: ExecutionContext, warnings: list[str]
+    ) -> AgentOutcome:
+        async def observe(phase: MemoryPhase, **metadata) -> None:
+            if self.memory_observer is None:
+                return
+            warning = await notify_memory(
+                self.memory_observer,
+                MemoryEvent(
+                    run_id=context.config.run_id,
+                    task_id=task.task_id,
+                    agent_id=task.assignee,
+                    attempt=context.attempt,
+                    phase=phase,
+                    **metadata,
+                ),
+                context.config.task_timeout_sec,
+            )
+            if warning and warning not in warnings:
+                warnings.append(warning)
+
         profile = self.profiles.get(task.assignee)
         if profile is None or profile.role != "worker":
             return AgentOutcome(
@@ -111,10 +143,24 @@ class AgentRuntime:
         session = self.sessions.get(key)
         if session is None:
             memory_context = ""
+            memory_metadata = None
             if context.config.memory_enabled:
                 if self.memory is None:
                     raise ValueError("memory_enabled requires a Role C memory adapter")
-                memory_context = await self.memory.retrieve(task.assignee, task)
+                try:
+                    memory_context = await self.memory.retrieve(task.assignee, task)
+                except Exception as exc:
+                    await observe("retrieved", ok=False, error_type=type(exc).__name__)
+                    if isinstance(exc, TimeoutError):
+                        raise
+                    return AgentOutcome(
+                        kind="failed",
+                        failure_code=FailureCode.INTERNAL_ERROR,
+                        summary=f"Memory retrieval failed: {type(exc).__name__}",
+                    )
+                if self.memory_observer is not None:
+                    memory_metadata = context_metadata(memory_context)
+                    await observe("retrieved", ok=True, **memory_metadata)
             session = _Session(
                 [
                     ChatMessage(
@@ -140,7 +186,8 @@ class AgentRuntime:
                             }
                         ),
                     ),
-                ]
+                ],
+                memory_metadata=memory_metadata,
             )
             self.sessions[key] = session
         try:
@@ -241,11 +288,29 @@ class AgentRuntime:
                         failure_code=FailureCode.BUDGET_EXCEEDED,
                         summary="Agent exceeded its step or token budget",
                     )
-                response = await self.model.complete(
-                    session.messages,
-                    available,
-                    max_tokens=min(context.config.max_output_tokens, remaining),
-                )
+                try:
+                    response = await self.model.complete(
+                        session.messages,
+                        available,
+                        max_tokens=min(context.config.max_output_tokens, remaining),
+                    )
+                except Exception as exc:
+                    if session.memory_metadata is not None:
+                        await observe(
+                            "injected",
+                            ok=False,
+                            model_step=session.steps + 1,
+                            error_type=type(exc).__name__,
+                            **session.memory_metadata,
+                        )
+                    raise
+                if session.memory_metadata is not None:
+                    await observe(
+                        "injected",
+                        ok=True,
+                        model_step=session.steps + 1,
+                        **session.memory_metadata,
+                    )
                 session.steps += 1
                 session.tokens += response.tokens
                 if session.tokens > context.config.max_task_tokens:

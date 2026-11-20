@@ -6,7 +6,7 @@ This guide distinguishes existing code, implementations required from teammates,
 
 ## 1. What Is Available Now
 
-The implementation provides planning, dependency execution, approval pauses, sub-delegation and accepted artifact handoffs. The repository now also contains B's file/search/host Python tools, C's JSONL memory and profiles, and D's file verifier, JSONL traces and offline harness. Container isolation, Git tools, conversational UI and complete live evaluation remain integration work. The smoke script assembles real file/search/verifier/trace adapters with memory disabled.
+The implementation provides planning, dependency execution, approval pauses, sub-delegation and accepted artifact handoffs. The repository also contains B's file/search/host Python/Git tools, C's JSONL memory and profiles, and D's verifier, JSONL traces, CLI and offline harness. Local Git and trusted host pytest have acceptance controls; container isolation, hosted Git evaluation, full multi-agent chat routing and complete live evaluation remain integration work. The smoke script assembles real file/search/verifier/trace adapters with memory disabled.
 
 | Module | Existing functionality | Boundaries and follow-up work |
 | --- | --- | --- |
@@ -269,6 +269,43 @@ Also supply a planning profile with `agent_id: planner` and `role: planner`. Sta
 Both flags default to True in `RunConfig()`. Without Memory, explicitly disable both. To validate actual memory behavior, connect a real adapter and enable the relevant flags.
 
 Control the model, tasks, prompts, acceptance rules and budgets, and record both flags and the starting memory snapshot. Experiments may compare frozen histories or task-by-task evolution in separate memory stores. Report actual effects without presuming improvement.
+
+### Worker Memory Lifecycle Check
+
+`build_service(memory=..., memory_observer=...)` accepts an optional
+`MemoryObserver` with `async memory_event(event: MemoryEvent)`. It is separate
+from the existing task `Observer` and does not change `Memory.retrieve()` or
+`Memory.reflect()`. One retrieval occurs when a new Worker attempt starts;
+`injected` records the result of each model-client call carrying that context,
+including empty context, and `reflected` reports the terminal write. Disabled
+reads emit neither retrieval nor injection events. Writes are controlled
+independently, and a failed/blocked task can still produce a reflection.
+
+The event carries run/task/agent/attempt identifiers, phase, outcome, optional
+model step, context length and SHA-256, and an exception type on failure. It
+contains no memory text, prompt, credentials or reasoning. A bounded callback
+failure is recorded as a task warning. `injected` proves context reached the model
+client call; task acceptance is separate evidence that the model used it. D may
+adapt the callback to the common trace; existing trace observers still work.
+
+From the repository root:
+
+```bash
+python -m scripts.worker_memory_demo --mock
+python -m scripts.worker_memory_demo --mock --disable-recall
+python -m scripts.worker_memory_demo --live
+```
+
+The live command requires exported DeepSeek variables and makes actual paid
+calls. Each invocation creates a fresh root. It runs two fixed Chinese tasks with
+distinct run IDs, the same Worker and `JsonlMemory`, and only `file_write` access.
+The second task's prompt and tools cannot access the first output or its random
+marker except through retrieved memory. The host verifier checks that marker;
+`--disable-recall` expects the second node to succeed and its final goal to fail
+on the missing marker. `memory-control.json` ties request digests to metadata in
+`trace.jsonl`; the per-run results, accepted files and private JSONL snapshot are
+kept in that local directory. This is a Worker integration check, separate from
+P2 autonomous planning, M2 retrieval selection and M3 effectiveness metrics.
 
 ### Follow-Up Joint Development
 

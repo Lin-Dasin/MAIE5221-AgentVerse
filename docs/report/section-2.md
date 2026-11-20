@@ -27,9 +27,9 @@ Implemented:
 - Typed integration ports, editable package installation, CI dependency installation,
   and offline tests including a synthetic goal-to-artifact workflow.
 
-The repository includes B's file/search/host Python tools, C's profiles and JSONL
+The repository includes B's file/search/host Python/Git tools, C's profiles and JSONL
 memory, and D's file verdicts, JSONL traces and offline harness. Remaining gaps
-include containers, Git tools, conversational routing/UI and full live evaluation.
+include containers, hosted Git evaluation, full conversational routing and live evaluation.
 The 2026-11-11 regressions use mocked HTTP, including a smoke-script workflow with
 real file/trace/verifier adapters; no new live-provider result is claimed. The
 client does not implement HKGAI. Container isolation remains B's responsibility;
@@ -261,6 +261,19 @@ fields. Request serialization, error handling and bounded retries are centralize
 in `runtime/client.py`; `scripts/live_smoke.py` now uses that client and
 `run_goal()`, with cleanup on every exit. Its goal check uses archive-relative
 `notes.md`, fixing the previous `outputs/notes.md` mismatch.
+
+## Worker memory lifecycle
+
+Worker memory can now be observed through the optional `MemoryObserver` port.
+Runtime emits retrieval and model-client injection results; Scheduler emits
+terminal reflection results. The callback carries only correlation identifiers,
+state, context length/digest and error type, never private text. D can persist it
+using the same trace envelope. The Worker memory example composes the real C
+adapter with two related Chinese tasks and B's file tool, verifies the model
+request's context digest and tests whether the second artifact uses a marker
+available only through memory. A mock negative control disables recall in the
+second task. See the [integration guide](../usage-and-integration.md#worker-memory-lifecycle-check)
+for credentialed reproduction. This evidence does not measure M3 effectiveness.
 
 ## Remaining lifecycle contracts
 

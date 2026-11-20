@@ -16,6 +16,7 @@ from protocol.models import (
     HITLDecision,
     HITLRequest,
     InputRef,
+    MemoryEvent,
     ModelResponse,
     Task,
     TaskGraph,
@@ -58,6 +59,18 @@ class Memory(Protocol):
     async def retrieve(self, agent_id: str, task: Task) -> str: ...
 
     async def reflect(self, task: Task, result: TaskResult) -> None: ...
+
+
+class MemoryObserver(Protocol):
+    """Optional A-to-D lifecycle hook, independent of existing Observer adapters.
+
+    retrieved reports the adapter result (including empty text). injected reports
+    a completed model-client call carrying that context, or a failed call attempt;
+    it does not assert that the model used the memory. reflected reports completion
+    or failure of the terminal write. D owns persistence and correlation.
+    """
+
+    async def memory_event(self, event: MemoryEvent) -> None: ...
 
 
 class Verifier(Protocol):

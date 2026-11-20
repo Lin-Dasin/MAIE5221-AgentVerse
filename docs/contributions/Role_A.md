@@ -119,6 +119,9 @@ and profiles, and D's file verifier/traces/offline harness are present. The
 and add plan preflight for artifact references and configured rule support. The
 smoke script reuses that client and checks the correct final archive path. See
 [the changelog](../changelog.md) for regression evidence; no new live API result
-is claimed. A must still coordinate chat entry points, Planner memory and the
+is claimed. The 2026-11-21 follow-up includes bounded Planner repairs, P2 task
+instruction guidance, T2/T3 verdict and approval regressions, and the optional
+Worker memory lifecycle hook and two-task reproduction. A must still coordinate
+chat entry points, Planner memory and the
 Critic agent lifecycle. Weekly progress evidence lives in PRs/tracking issues,
 not a separate weekly-report directory.

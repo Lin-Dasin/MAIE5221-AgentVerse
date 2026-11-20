@@ -177,7 +177,7 @@ async def test_no_plan_preserves_failed_goal_and_undefined_node_rate(
         client_factory=lambda: client,
         tool_factory=factory,
     )
-    assert client.closed and client.calls == 2 and calls == []
+    assert client.closed and client.calls == 3 and calls == []
     assert report.status == "failed" and report.raw_result.graph is None
     assert report.raw_result.failure_code == FailureCode.MODEL_ERROR
     assert report.subtasks_total == report.subtasks_passed == 0
