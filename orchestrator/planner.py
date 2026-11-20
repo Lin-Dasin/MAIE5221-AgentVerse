@@ -17,6 +17,8 @@ from protocol.models import (
 )
 from protocol.ports import ModelClient
 
+PLAN_GENERATION_ATTEMPTS = 3
+
 
 class PlanningError(ValueError):
     pass
@@ -78,6 +80,16 @@ class Planner:
                 "relative to the final task's archive (without outputs/). "
                 "Every input must match a declared upstream output after removing outputs/. "
                 "Final outputs must cover all required goal file checks. "
+                "Path example: an upstream output outputs/report.md is published as report.md. "
+                'CORRECT input: {"from_task":"source","path":"report.md",'
+                '"as":"inputs/report.md"}; WRONG input path: outputs/report.md. '
+                "To check that output, node acceptance uses outputs/report.md, NOT report.md. "
+                "Goal acceptance uses report.md when this is the final output. "
+                "Workers read handed-off files using inputs[].as, not inputs[].path. "
+                "Each worker receives only its own Task, not this original goal: make its title "
+                "a self-contained instruction preserving the requested topic, exact markers, "
+                "format and output paths. For synthesis, preserve all read-each-input and "
+                "verbatim-copy requirements; never invent the upstream content. "
                 "Use only the supplied supported_acceptance_types. "
                 "Use summary to explain role assignments. No tools may be executed in planning.",
             ),
@@ -105,7 +117,7 @@ class Planner:
 
         async def generate() -> TaskGraph:
             last_error = ""
-            for _ in range(2):
+            for _ in range(PLAN_GENERATION_ATTEMPTS):
                 response = await ask(messages)
                 text = response.content
                 try:
@@ -127,7 +139,13 @@ class Planner:
                                 content=text,
                                 reasoning_content=response.reasoning_content,
                             ),
-                            ChatMessage(role="user", content=f"Repair this invalid plan: {exc}"),
+                            ChatMessage(
+                                role="user",
+                                content=f"Repair this invalid plan: {exc}\n"
+                                "Return the complete corrected TaskGraph. Preserve the original "
+                                "task instructions and required goal acceptance. Use the exact "
+                                "legal paths in the diagnostic; do not repeat the rejected path.",
+                            ),
                         ]
                     )
             raise PlanningError(f"planner could not produce a valid task graph: {last_error}")
@@ -137,8 +155,8 @@ class Planner:
             return graph
         bids = []
         for worker in workers:
-            # Reserve two calls for final planning and one possible schema repair.
-            if config.max_planning_calls - calls < 3:
+            # One bid plus the full final-generation/repair allowance must fit.
+            if config.max_planning_calls - calls < 1 + PLAN_GENERATION_ATTEMPTS:
                 break
             response = await ask(
                 [

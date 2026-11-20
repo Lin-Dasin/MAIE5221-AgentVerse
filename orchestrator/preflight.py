@@ -53,6 +53,21 @@ class PlanPreflight:
                     f"task {task.task_id}: assignee {task.assignee!r} is not a registered worker"
                 )
             self.check_rules(task.acceptance, f"task {task.task_id}")
+            for rule in task.acceptance:
+                # Reject a known archive/workspace mix-up, not arbitrary valid
+                # workspace checks (for example inputs/ or auxiliary files).
+                expected = f"outputs/{rule.path}"
+                if (
+                    rule.type in FILE_RULE_TYPES
+                    and rule.path not in task.outputs
+                    and expected in task.outputs
+                    and rule.path not in {ref.destination for ref in task.inputs}
+                ):
+                    raise PlanContractError(
+                        f"task {task.task_id}: node acceptance path {rule.path!r} "
+                        "is archive-relative; "
+                        f"use declared workspace output {expected!r}"
+                    )
             for ref in task.inputs:
                 if ref.path not in published[ref.from_task]:
                     raise PlanContractError(

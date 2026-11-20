@@ -2,6 +2,22 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-21 — Planner Repair and P2 Task Instructions
+
+- Based on develop `68aee5f` (including C's #25 and D's #26).
+- Added positive/negative examples for workspace outputs, archived inputs, input
+  destinations and goal paths. Worker task titles must retain the original topic,
+  exact markers, format and read/copy requirements.
+- Raised bounded generation from two to three attempts and reserved all three
+  final-generation calls before requesting more specialist bids. Global call,
+  token and timeout budgets are unchanged.
+- Reject known node acceptance archive/workspace path mix-ups before execution,
+  without rewriting dataset criteria or blocking declared input checks.
+- Validation: 37 Planner/runtime/preflight/P2 tests passed, including third-attempt
+  repair through `run_goal()` with real file verification and handoff, exhausted
+  budgets, negotiation reservations and legal workspace paths. No live API call
+  was made; default-profile P2 still needs credentialed remeasurement.
+
 ## 2026-11-11 — Role A: Shared Model Client and Executable Plan Preflight
 
 Two integration defects were prioritized: the live smoke script duplicated the

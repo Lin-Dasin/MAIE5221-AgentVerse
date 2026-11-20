@@ -220,7 +220,7 @@ async def test_planning_call_budget_is_bounded():
 
 
 async def test_planning_failure_returns_a_record_for_the_harness(tmp_path):
-    model = ScriptedModel("not json", "still not json")
+    model = ScriptedModel("not json", "still not json", "not repaired")
     runtime = AgentRuntime(model, FixtureTools(tmp_path), {"writer": profile()}, [])
     service = CollaborationService(
         Planner(model, profile("planner", role="planner")),

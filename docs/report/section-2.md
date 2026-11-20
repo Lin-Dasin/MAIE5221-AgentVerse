@@ -1,6 +1,6 @@
 # Section 2 — Routing and Collaboration Logic
 
-Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-11-11; team review pending.
+Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-11-21; team review pending.
 
 ## Status and scope
 
@@ -111,7 +111,12 @@ point for C; worker-memory retrieval is implemented in the runtime.
 declared upstream outputs after the archive mapping, and goal file checks must
 name published outputs of the final task. Unsupported externally supplied goal
 rules fail before a model call. A generated invalid graph receives its specific
-diagnostic and one bounded repair opportunity per generation. Fixed graphs are
+diagnostic and two bounded repair opportunities per generation (three attempts).
+Specialist bids reserve three calls for the final generation/repair cycle. Shared
+prompts demonstrate both path roots and require self-contained task instructions,
+including topics, exact markers and read/copy requirements. Node file checks that
+use the archive name of a declared output are rejected with its workspace path;
+declared input and unrelated workspace checks retain their meaning. Fixed graphs are
 checked before workspace creation; dynamic children are checked before insertion
 or parent suspension. Dataset criteria are not rewritten. These declaration
 checks do not evaluate actual file content or semantic Worker capabilities.

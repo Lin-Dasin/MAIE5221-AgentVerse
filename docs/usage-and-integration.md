@@ -1,6 +1,6 @@
 # Usage and B/C/D Integration Guide
 
-Updated: 2026-11-11. Scope: the current Role A implementation and integration contracts.
+Updated: 2026-11-21. Scope: the current Role A implementation and integration contracts.
 
 This guide distinguishes existing code, implementations required from teammates, and follow-up development involving multiple roles. Passing local tests does not establish that real APIs, containers, tools or official evaluation are complete. The current alignment still requires normal PR review.
 
@@ -168,7 +168,7 @@ with publication so the mapping removes exactly one leading `outputs/`.
 | Final goal acceptance | `notes.md` |
 
 Planner drafts and negotiated plans both undergo preflight. A rejected candidate
-gets a diagnostic and at most one repair per generation, still bounded by
+gets a diagnostic and at most two repairs per generation (three attempts total), bounded by
 `max_planning_calls` and the token budget. Dataset rules are never silently
 rewritten or weakened. Unsupported externally supplied goal rules fail before a
 model call. `run_goal()` returns a failure record and retains useful plan-error
@@ -188,6 +188,22 @@ Preflight does not execute tools, test file existence/content, infer semantic
 capability matches, or replace D's acceptance decisions. Paths remain exact,
 case-sensitive file declarations; supported future non-file rules retain their
 adapter-specific path semantics.
+
+Planner specialist bids reserve three remaining calls for final generation and
+repair: a bid is requested only when at least four calls remain. The total
+`max_planning_calls`, token and time limits still apply; increasing repair attempts
+does not increase them. Invalid input paths are repaired with explicit examples:
+`outputs/report.md` is published as `report.md`, handed off to `inputs/report.md`,
+and read using the input's `as` destination. Node output checks retain `outputs/`.
+Preflight also rejects a node file rule that mistakenly uses the archive path of
+a declared output, while preserving declared input and auxiliary workspace checks.
+
+Each task title must preserve its relevant topic, exact labels, output format and
+input-reading/copying instructions because Workers do not receive the original
+goal. These rules live in the shared Planner, including default P2 profiles. Run
+`python -m harness.p2 run --work-dir results/p2-role-a` without `--guided` after
+exporting model credentials; inspect its `p2-check.json`, not just file existence.
+Offline repair/handoff tests do not establish real-model P2 completion.
 
 Use a new `run_id` for every run. Identifier permits only letters, digits, underscores and hyphens; do not use a timestamp containing colons directly. The default `RunConfig()` generates a valid ID.
 
