@@ -117,6 +117,7 @@ class TitleVerifier(FileVerifier):
     """Require the chosen title on the first line of the final archive."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.title: str | None = None
 
     async def check(self, rules: list[AcceptanceRule], root: Path) -> CriticResult:
