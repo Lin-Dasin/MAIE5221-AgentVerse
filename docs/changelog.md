@@ -2,6 +2,21 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-21 — T2/T3 Role A Integration Regressions
+
+- Verified the public `build_service()` factory with an explicitly advertised
+  pytest verifier: real trusted tests fail, send defects into retry, recover without
+  extra logical nodes, block dependents, and fail the goal independently of node success.
+- Added approval-boundary regressions for refusal, timeout, wrong request IDs and
+  multiple protected calls in a single model response. Retry budgets cannot bypass
+  denial; queues and sessions are released and every push needs its own decision.
+- Validation: 11 tests passed across the new A suites and D's T2/T3 suites. The
+  production decision/approval flow needed no change. B's runner, Git tools and
+  D's verdict/metric implementations remain owned by their respective authors.
+- Updated integration/architecture guidance for opt-in pytest support, failure
+  semantics and approval order. T2/T3 results cover trusted host fixtures and local
+  Git transport only.
+
 ## 2026-11-21 — Planner Repair and P2 Task Instructions
 
 - Based on develop `68aee5f` (including C's #25 and D's #26).

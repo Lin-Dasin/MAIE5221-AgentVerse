@@ -179,8 +179,11 @@ suspension; a bad request fails the parent with `invalid_output`.
 The optional `build_service(supported_acceptance_types=...)` argument defaults to
 `{"file_exists", "text_contains"}`, matching D's current `FileVerifier`. It is an
 explicit declaration by the application about the supplied verifier, not a new
-evaluator. Enable `pytest_passes` only after B/D supply its isolated execution
-implementation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
+evaluator. D now exposes `FileVerifier(pytest_runner=...)` and
+`verifier.supported_acceptance_types`; B supplies a host runner for trusted fixtures.
+Pass that set explicitly to `build_service()` for the configured verifier. Keep
+the file-only default for ordinary runs; generated code still needs container
+isolation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
 only configured `worker_ids` enable its registry check. Production callers should
 use `build_service()` to keep both stages consistent.
 
@@ -282,9 +285,33 @@ The single rule interpreter in `harness/verdict.py` conforms to `Verifier.check(
 
 - `file_exists`: check the specified artifact.
 - `text_contains`: check for the specified nonempty text.
-- `pytest_passes`: still requires B's isolated executor integration; default plan preflight rejects it before execution.
+- `pytest_passes`: available when a runner is explicitly supplied to `FileVerifier` and its capability set is passed to A. The current host runner is used only for trusted fixtures; the default file-only preflight still rejects this rule.
 
 Do not use the default-passing `StubVerifier` from `tests/helpers.py` as the real verifier. File existence or a Sources section does not establish factual accuracy. For richer official criteria, D/A must extend the rule model and evaluator implementation.
+
+### T2 Verdicts and T3 Approval Ordering
+
+The A-side assembly is `build_service(verifier=verifier,
+supported_acceptance_types=verifier.supported_acceptance_types, ...)`. Node checks
+run in the workspace and final checks run in the archive. Failed node checks feed
+their defects to a bounded retry and prevent publication; exhausted failures block
+dependent tasks. A successful node does not override a failed final-goal check.
+Runner-reported pytest timeouts are `acceptance_failed` with timeout evidence in
+the critique; a scheduler deadline expiring is `timeout`.
+
+Protected tool calls are held until a matching decision. Denial and approval
+timeout terminate the attempt with `status=failed`, `failure_code=hitl_blocked`,
+without automatic retries or execution of the rest of the queued calls. A wrong
+request ID fails with `invalid_output`. Each protected call needs its own decision,
+including multiple pushes in one model response. `hitl_decided` precedes the
+approved executor call. Dependent nodes may then be `blocked`.
+
+`python -m harness.t2` and `python -m harness.t3` remain D's acceptance commands.
+T2 control success expects raw goals/nodes 1/4; T3 expects approval success and
+denial failure with unchanged remote refs. A's file verdict alone cannot prove Git
+publication: D checks the named branch, full commit and blob. These controls use
+trusted host pytest fixtures and a local bare Git repository, not container or
+hosted-Git evaluation.
 
 ### Events, Human Responses and Chat
 

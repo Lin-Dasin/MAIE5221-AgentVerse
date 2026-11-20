@@ -215,7 +215,7 @@ entry. This local alignment does not claim that review has already happened.
 
 | # | Contract | Owner | Rule |
 |---|---|---|---|
-| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | `harness/verdict.py` implements file/text rules behind `Verifier.check()`. Code checks still require B/D's isolated executor integration; A's preflight rejects unsupported rules by default. |
+| 1 | Verdict logic (`file_exists`, `text_contains`, `pytest_passes`) | D | `harness/verdict.py` implements file/text checks and opt-in pytest checks via B's runner. Trusted host fixtures are supported; generated code needs container isolation. A receives the configured capability set explicitly. |
 | 2 | Metric computation | D | Only `harness/` computes `goal_completion_rate`, `subtask_completion_rate` and duration. Other modules expose raw facts, never aggregates. |
 | 3 | Event schema | D | `bus/trace.py` maps A's Observer callbacks and wraps B's tools into JSONL records. Full chat routing remains separate work. |
 | 4 | `ToolResult` | A | One pydantic model in `protocol/`, fields `ok` `data` `error` `elapsed` `meta`. Tools return this model instead of defining their own envelope. |

@@ -65,8 +65,9 @@ The following details are implementation proposals for B/C/D review:
 1. `TaskGraph` includes `tasks`, `final_task_id`, `goal_acceptance` and `summary`.
    Planner-created nodes have depth 0. Dynamic child nodes are added by A only.
 2. `AcceptanceRule` uses `type`, `path` and optional `text`. D implements
-   `file_exists` and `text_contains` in its current evaluator; `pytest_passes`
-   remains unavailable until B/D integrate isolated test execution. The shared
+   `file_exists` and `text_contains`; `pytest_passes` is enabled when a runner is
+   supplied to D's evaluator. B/D's trusted-fixture host runner is now integrated;
+   generated code still requires container isolation. The shared
    preflight defaults to the two implemented types; the application explicitly
    declares additional support through `build_service(supported_acceptance_types=...)`.
    Meaningful content requirements need corresponding D-owned checks; a file
@@ -189,6 +190,16 @@ The runtime pauses before calling such a tool. On approval, it resumes that exac
 pending call; other queued calls remain pending. Every approved protected call
 therefore has its own decision record. D chooses the private/group channel for
 questions and may broadcast appropriate summaries, not internal payloads.
+
+The 2026-11-21 regressions exercise the public composition with D's real verifier
+and B's trusted pytest runner: failures feed retry defects, exhausted nodes never
+publish, dependents block, and a failed archive verdict keeps the overall goal
+failed even when its node succeeded. Runner timeouts are acceptance failures with
+details in the critique; scheduler deadlines use the separate timeout code.
+Approval regressions cover denied/expired/mismatched decisions with nonzero retry
+budgets, discarding queued operations, and two pushes requiring distinct approvals.
+Denied/expired tasks have status `failed` and code `hitl_blocked`; `blocked` is used
+for dependent tasks. No new evaluator or Git implementation is introduced by A.
 
 ## Message storage and conversation history
 
