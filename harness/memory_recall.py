@@ -97,7 +97,9 @@ async def _measure(root: Path) -> dict:
             )
         summary[language] = {"hits": hits, "total": len(corpus), "hit_rate": hits / len(corpus)}
     return {
-        "benchmark": "m2-bilingual-recall-v1",
+        "benchmark": "m2-bilingual-recall-v2",
+        "retrieval_policy": "deterministic token-overlap top-one retrieval",
+        "hit_policy": "the single returned record contains the case's expected advice marker",
         "max_records": 1,
         "cases": rows,
         "summary": summary,
