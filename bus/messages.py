@@ -118,11 +118,11 @@ class MessageBus:
         if row is None:
             raise PermissionError("Identity is not a member of this conversation")
 
-    def _require_chat_pair(
+    def _require_distinct_members(
         self, connection: sqlite3.Connection, conversation_id: str, sender: str, agent_id: str
     ) -> str:
         if sender == agent_id:
-            raise MessageBusError("Chat requires distinct sender and agent identities")
+            raise MessageBusError("The sender and recipient must be distinct members")
         self._require_member(connection, conversation_id, sender)
         self._require_member(connection, conversation_id, agent_id)
         (kind,) = connection.execute(
@@ -179,8 +179,24 @@ class MessageBus:
         agent_id = _identifier(agent_id, "Agent ID")
         with self._connection() as connection:
             connection.execute("BEGIN")
-            kind = self._require_chat_pair(connection, conversation_id, sender, agent_id)
+            kind = self._require_distinct_members(connection, conversation_id, sender, agent_id)
             return kind, self._history(connection, conversation_id, after=0)
+
+    def group_members(self, conversation_id: str, sender: str, notifier: str) -> frozenset[str]:
+        """Check the identities for a group run and return its eligible member IDs."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        sender = _identifier(sender, "Sender")
+        notifier = _identifier(notifier, "Notifier")
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            kind = self._require_distinct_members(connection, conversation_id, sender, notifier)
+            if kind != "group":
+                raise MessageBusError("Starting a task requires a group conversation")
+            rows = connection.execute(
+                "SELECT member FROM conversation_members WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            return frozenset(member for (member,) in rows)
 
     def record_chat_exchange(
         self,
@@ -202,7 +218,7 @@ class MessageBus:
             raise MessageBusError("Expected sequence must be a non-negative integer")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            self._require_chat_pair(connection, conversation_id, sender, agent_id)
+            self._require_distinct_members(connection, conversation_id, sender, agent_id)
             if self._current_sequence(connection, conversation_id) != expected_sequence:
                 raise MessageBusError(
                     "Conversation changed while waiting for the reply. Try again."

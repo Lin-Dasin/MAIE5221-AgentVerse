@@ -11,7 +11,7 @@ from pydantic import TypeAdapter
 
 from harness import delegation_case, permission_cases
 from harness import run as evaluation
-from harness.metrics import Summary
+from harness.metrics import CaseReport, Summary
 from protocol.models import AcceptanceRule
 from ui import h1_demo, replay
 
@@ -23,22 +23,35 @@ def _run_goal(argv: list[str]) -> int:
         prog="agentverse run", description="Run a natural-language goal"
     )
     parser.add_argument("goal")
-    parser.add_argument("--work-dir", type=Path, default=Path("results/cli-goals"))
-    parser.add_argument("--profiles-dir", type=Path)
-    parser.add_argument("--acceptance", type=Path, help="JSON array of fixed goal acceptance rules")
+    _add_goal_options(parser, default_work_dir=Path("results/cli-goals"))
     args = parser.parse_args(argv)
     goal = args.goal.strip()
     if not goal:
         parser.error("goal must contain text")
 
-    rules = None
-    if args.acceptance is not None:
-        rules = TypeAdapter(list[AcceptanceRule]).validate_json(args.acceptance.read_bytes())
-        if not rules:
-            parser.error("--acceptance must contain at least one rule")
+    rules = _goal_rules(parser, args.acceptance)
     evaluation_path, report = asyncio.run(
         run_goal(goal, args.work_dir, rules=rules, profiles_dir=args.profiles_dir)
     )
+    return _display_goal_report(evaluation_path, report)
+
+
+def _add_goal_options(parser: argparse.ArgumentParser, *, default_work_dir: Path) -> None:
+    parser.add_argument("--work-dir", type=Path, default=default_work_dir)
+    parser.add_argument("--profiles-dir", type=Path)
+    parser.add_argument("--acceptance", type=Path, help="JSON array of fixed goal acceptance rules")
+
+
+def _goal_rules(parser: argparse.ArgumentParser, path: Path | None) -> list[AcceptanceRule] | None:
+    if path is None:
+        return None
+    rules = TypeAdapter(list[AcceptanceRule]).validate_json(path.read_bytes())
+    if not rules:
+        parser.error("--acceptance must contain at least one rule")
+    return rules
+
+
+def _display_goal_report(evaluation_path: Path, report: CaseReport) -> int:
     run_dir = evaluation_path.parent
     print(f"Goal: {report.status}")
     print(f"Subtasks: {report.subtasks_passed}/{report.subtasks_total}")
@@ -92,6 +105,12 @@ def _messages(argv: list[str]) -> int:
     chat.add_argument("--agent", required=True)
     chat.add_argument("--text", required=True)
     chat.add_argument("--profiles-dir", type=Path, default=Path("profiles"))
+    group_run = actions.add_parser("run", help="Start a goal and report its results in a group")
+    group_run.add_argument("conversation")
+    group_run.add_argument("--sender", required=True)
+    group_run.add_argument("--notifier", default="orchestrator", help="Group member posting events")
+    group_run.add_argument("--goal", required=True)
+    _add_goal_options(group_run, default_work_dir=Path("results/group-goals"))
     history = actions.add_parser("history", help="Read a conversation as one of its members")
     history.add_argument("conversation")
     history.add_argument("--as-id", required=True)
@@ -113,6 +132,23 @@ def _messages(argv: list[str]) -> int:
             )
         )
         print(f"{reply.sender}: {json.dumps(reply.text, ensure_ascii=False)}")
+    elif args.action == "run":
+        from ui.group_run import run_group_goal
+
+        rules = _goal_rules(group_run, args.acceptance)
+        evaluation_path, report = asyncio.run(
+            run_group_goal(
+                bus,
+                args.conversation,
+                args.sender,
+                args.notifier,
+                args.goal,
+                args.work_dir,
+                rules=rules,
+                profiles_dir=args.profiles_dir,
+            )
+        )
+        return _display_goal_report(evaluation_path, report)
     else:
         for event in bus.history(args.conversation, args.as_id, after=args.after):
             print(

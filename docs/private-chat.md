@@ -34,5 +34,27 @@ The CLI trusts the local operator to supply their identity. Both the sender and
 the selected Worker must belong to the conversation. Each successful turn saves
 the prompt and reply together. If the provider fails or another command changes
 that conversation before the reply is saved, repeat the chat command using the
-current history. Chat mode uses an empty tool list. Goal execution continues
-through `python -m ui.cli run`.
+current history. Chat mode uses an empty tool list.
+
+## Start a group task
+
+Use `messages run` to submit an explicit goal to the shared Planner and
+Scheduler. Create a group with the requesting user, a member to post run
+notifications (default `orchestrator`), and the eligible Worker IDs. The CLI
+limits the file-tool Workers to members of that group.
+
+This example uses the P2 profiles and fixed acceptance rule file:
+
+```powershell
+$db = 'results/group-p2.sqlite3'
+$goal = (Get-Content -Raw -Encoding UTF8 'harness/suites/p2/goal.txt').Trim()
+python -m ui.cli messages --db $db create p2-team --kind group --member user --member orchestrator --member owner_a --member owner_b --member writer
+python -m ui.cli messages --db $db run p2-team --sender user --goal $goal --profiles-dir 'harness/suites/p2/profiles-guided' --acceptance 'harness/suites/p2/acceptance.json'
+python -m ui.cli messages --db $db history p2-team --as-id writer
+```
+
+The history includes the goal, handoff notices and final status with artifact
+and report paths. All events for the goal carry its run ID. Each command
+executes in a fresh run directory and uses the existing terminal clarification
+flow. The Planner receives the goal from `--goal`. Group history remains
+available when reading the conversation or using `messages chat`.

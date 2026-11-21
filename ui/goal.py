@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from bus.trace import TRACE_FILENAME, JsonlTrace, TracingToolExecutor
@@ -50,17 +50,27 @@ async def run_goal(
     profiles_dir: Path | None = None,
     client_factory: Callable[[], DeepSeekClient] = DeepSeekClient.from_environment,
     tool_factory: ToolFactory = _build_file_tools,
+    run_id: str | None = None,
+    worker_ids: Collection[str] | None = None,
+    trace_factory: Callable[[Path], ConsoleTrace] = ConsoleTrace,
 ) -> tuple[Path, CaseReport]:
     if not goal.strip():
         raise ValueError("goal must contain text")
     config = RunConfig(memory_enabled=False, write_memory=False)
+    if run_id is not None:
+        config.run_id = run_id
     root = work_dir.resolve() / config.run_id
     executor, definitions = tool_factory(root)
     names = {definition.name for definition in definitions}
     profiles = {
         agent_id: profile
         for agent_id, profile in load_profiles(profiles_dir or Path("profiles")).items()
-        if profile.role == "planner" or (profile.role == "worker" and set(profile.tools) <= names)
+        if profile.role == "planner"
+        or (
+            profile.role == "worker"
+            and set(profile.tools) <= names
+            and (worker_ids is None or agent_id in worker_ids)
+        )
     }
     workers = sorted(agent_id for agent_id, profile in profiles.items() if profile.role == "worker")
     if not workers or "planner" not in profiles:
@@ -69,7 +79,7 @@ async def run_goal(
     client = client_factory()
     try:
         root.mkdir(parents=True, exist_ok=False)
-        trace = ConsoleTrace(root / TRACE_FILENAME)
+        trace = trace_factory(root / TRACE_FILENAME)
         service = build_service(
             root=root,
             model=client,
