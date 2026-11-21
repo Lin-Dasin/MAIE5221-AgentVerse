@@ -86,7 +86,7 @@ def _messages(argv: list[str]) -> int:
         default="message",
     )
     publish.add_argument("--text", required=True)
-    chat = actions.add_parser("chat", help="Ask a Worker for a private text reply")
+    chat = actions.add_parser("chat", help="Ask one Worker to reply in a private or group chat")
     chat.add_argument("conversation")
     chat.add_argument("--sender", required=True)
     chat.add_argument("--agent", required=True)
@@ -105,7 +105,7 @@ def _messages(argv: list[str]) -> int:
         event = bus.publish(args.conversation, args.sender, args.kind, args.text)
         print(f"Event {event.sequence} recorded")
     elif args.action == "chat":
-        from ui.private_chat import chat as request_reply
+        from ui.chat import chat as request_reply
 
         reply = asyncio.run(
             request_reply(

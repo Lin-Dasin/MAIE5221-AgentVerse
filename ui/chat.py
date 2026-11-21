@@ -1,4 +1,4 @@
-"""Use the shared model client for a text-only turn in a private conversation."""
+"""Use the shared model client for a text-only turn addressed to one Worker."""
 
 from pathlib import Path
 
@@ -20,18 +20,24 @@ async def chat(
     if not text.strip():
         raise ValueError("Chat text must not be empty")
 
-    history = bus.private_chat_history(conversation, sender, agent_id)
+    kind, history = bus.chat_history(conversation, sender, agent_id)
     profile = load_profiles(profiles_dir).get(agent_id)
     if profile is None or profile.role != "worker":
         raise ValueError(f"Chat requires an existing Worker profile: {agent_id}")
 
     messages = [ChatMessage(role="system", content=profile.system_prompt)]
-    messages.extend(
-        ChatMessage(role="user" if event.sender == sender else "assistant", content=event.text)
-        for event in history
-        if event.kind == "message"
-    )
-    messages.append(ChatMessage(role="user", content=text))
+    is_group = kind == "group"
+    for event in history:
+        if event.kind != "message":
+            continue
+        if event.sender == agent_id:
+            messages.append(ChatMessage(role="assistant", content=event.text))
+        else:
+            content = f"{event.sender}: {event.text}" if is_group else event.text
+            messages.append(ChatMessage(role="user", content=content))
+    posted_text = f"@{agent_id} {text}" if is_group else text
+    prompt = f"{sender}: {posted_text}" if is_group else posted_text
+    messages.append(ChatMessage(role="user", content=prompt))
     client = DeepSeekClient.from_environment()
     try:
         response = await client.complete(messages, [], max_tokens=512)
@@ -40,11 +46,11 @@ async def chat(
     if response.tool_calls or not response.content.strip():
         raise RuntimeError("The model did not return a usable text reply")
 
-    return bus.record_private_exchange(
+    return bus.record_chat_exchange(
         conversation,
         sender,
         agent_id,
-        text,
+        posted_text,
         response.content,
         expected_sequence=history[-1].sequence if history else 0,
     )
