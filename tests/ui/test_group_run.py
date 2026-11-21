@@ -74,13 +74,26 @@ def test_group_run_writes_request_handoff_and_result_to_the_same_room(
         goal_acceptance=[AcceptanceRule(type="file_exists", path="summary.md")],
     )
 
-    async def fake_goal(goal, work_dir, *, rules, profiles_dir, run_id, worker_ids, trace_factory):
+    async def fake_goal(
+        goal,
+        work_dir,
+        *,
+        rules,
+        profiles_dir,
+        run_id,
+        worker_ids,
+        trace_factory,
+        ask,
+        approval_timeout_sec,
+    ):
         runs.append(run_id)
         assert goal == GOAL
         assert work_dir == tmp_path / "runs"
         assert rules == [AcceptanceRule(type="file_exists", path="summary.md")]
         assert profiles_dir == profiles
         assert set(worker_ids) == {"writer", "reviewer"}
+        assert callable(ask)
+        assert approval_timeout_sec == 60
         root = work_dir / run_id
         trace = trace_factory(root / "trace.jsonl")
         await trace.plan_ready(run_id, graph)
