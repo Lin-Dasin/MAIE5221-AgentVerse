@@ -102,6 +102,7 @@ set LLM_API_KEY=sk-...                             :: cmd
 
 ```powershell
 $env:LLM_API_KEY = "sk-..."                        # PowerShell
+$env:SEARCH_API_KEY = "tvly-..."                   # Optional: enable search
 ```
 
 Option B — the application loader reads `.env` at startup. That belongs to the
@@ -114,11 +115,12 @@ shutdown. Until it exists, use Option A.
 |---|---|---|
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` | Before constructing the model client | `ValueError: LLM_BASE_URL, LLM_API_KEY and LLM_MODEL must be set` |
 | `LLM_THINKING` | Optional | Defaults to `disabled`; invalid values raise `ValueError` |
-| `SEARCH_API_KEY` | Only when `web_search` is called | The tool returns a failed result; the service still starts |
+| `SEARCH_API_KEY` | For search-enabled CLI runs or direct `web_search` calls | CLI runs use file tools. A direct search tool call reports missing configuration. |
 | `GITHUB_TOKEN`, `GITHUB_SANDBOX_REPO` | Only when the git tool exists | No effect yet |
 
-Note the distinction: the **tool name** must be registered for a profile to load,
-but its **key** is only needed when the tool is actually called.
+The CLI enables `web_search` when `SEARCH_API_KEY` is set to a non-blank
+value. This lets the bundled `researcher` join planning for `run`. With
+`messages run`, add `researcher` to the group to make it eligible there.
 
 ## 5. CI
 
@@ -136,6 +138,15 @@ python -m pytest -q
 ```
 
 The first command prints booleans, never the key values.
+
+With both model and search credentials exported, run a search task through the
+ordinary CLI from the repository root:
+
+```bash
+python -m ui.cli run "Use researcher to find the Python asyncio docs and write outputs/report.md with the source URL."
+```
+
+The CLI prints the paths to the report, trace and evaluation JSON.
 
 For an actual model/file workflow after exporting credentials, run from the
 repository root:

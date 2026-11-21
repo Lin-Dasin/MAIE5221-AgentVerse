@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,7 @@ from protocol.models import (
     AcceptanceRule,
     AgentProfile,
     FailureCode,
+    InputRef,
     ModelResponse,
     Task,
     TaskGraph,
@@ -16,10 +18,12 @@ from protocol.models import (
     ToolDefinition,
     ToolResult,
 )
+from tools import web_search
 from ui import goal as goal_module
 from ui.goal import GoalReport, run_goal
 
 REPORT_TEXT = "# 生成报告\n\nverified phrase\n"
+BUILTIN_PROFILES = Path(__file__).resolve().parents[2] / "profiles"
 
 
 @pytest.fixture
@@ -97,8 +101,13 @@ class ScriptedClient:
             payload = json.loads(messages[-1].content)
             self.planning_requests.append(payload)
             if "profile" in payload:
+                task_ids = [
+                    task.task_id
+                    for task in self.graph.tasks
+                    if task.assignee == payload["profile"]["agent_id"]
+                ]
                 return ModelResponse(
-                    content=json.dumps({"task_ids": ["write-report"], "rationale": "I can write"}),
+                    content=json.dumps({"task_ids": task_ids, "rationale": "I can help"}),
                     tokens=3,
                 )
             return ModelResponse(content=self.graph.model_dump_json(), tokens=5)
@@ -163,6 +172,148 @@ async def test_goal_runs_planning_and_enforces_supplied_acceptance(
     assert events[0]["event"] == "plan_ready" and events[-1]["event"] == "run_finished"
     assert events[-1]["status"] == report.status
     assert "Available workers: writer" in capsys.readouterr().out
+
+
+async def test_goal_searches_and_hands_a_real_source_file_to_writer(tmp_path, monkeypatch):
+    source_title = "文献记录"
+    source_url = "https://example.test/research"
+    query = "find the research source"
+    search_requests = []
+
+    async def fake_tavily(query, *, api_key, max_results):
+        search_requests.append((query, api_key, max_results))
+        return [{"title": source_title, "url": source_url, "content": "Source overview"}]
+
+    monkeypatch.setenv("SEARCH_API_KEY", " test-key ")
+    monkeypatch.setattr(web_search, "fetch_tavily", fake_tavily)
+    rule = AcceptanceRule(type="text_contains", path="report.md", text=source_url)
+    handoff = InputRef(from_task="research", path="source.md", destination="inputs/source.md")
+
+    def tool_call(call_id, name, **arguments):
+        return ModelResponse(
+            tool_calls=[ToolCall(call_id=call_id, name=name, arguments=arguments)], tokens=2
+        )
+
+    class ResearchClient(ScriptedClient):
+        async def complete(self, messages, tools, *, max_tokens):
+            if not tools:
+                return await super().complete(messages, tools, max_tokens=max_tokens)
+            latest = messages[-1]
+            if latest.role == "user":
+                if any(tool.name == "web_search" for tool in tools):
+                    return tool_call("search", "web_search", query=query, max_results=1)
+                return tool_call("read-source", "file_read", path="inputs/source.md")
+
+            result = json.loads(latest.content)
+            assert result["ok"], result["error"]
+            if latest.tool_call_id == "search":
+                assert result["data"]["provider"] == "tavily"
+                source = result["data"]["results"][0]
+                return tool_call(
+                    "write-source",
+                    "file_write",
+                    path="outputs/source.md",
+                    text=f"{source['title']}\n{source['url']}\n",
+                )
+            if latest.tool_call_id == "read-source":
+                return tool_call(
+                    "write-report",
+                    "file_write",
+                    path="outputs/report.md",
+                    text=f"# 研究报告\n\n{result['data']['text']}",
+                )
+            assert latest.tool_call_id in {"write-source", "write-report"}
+            return ModelResponse(content="Done", tokens=3)
+
+    client = ResearchClient()
+    client.graph = TaskGraph(
+        tasks=[
+            Task(
+                task_id="research",
+                title="Search and save a source",
+                assignee="researcher",
+                outputs=["outputs/source.md"],
+                acceptance=[AcceptanceRule(type="file_exists", path="outputs/source.md")],
+                max_retries=0,
+            ),
+            Task(
+                task_id="write-report",
+                title="Read the source and write a report",
+                assignee="writer",
+                depends_on=["research"],
+                inputs=[handoff],
+                outputs=["outputs/report.md"],
+                acceptance=[AcceptanceRule(type="file_exists", path="outputs/report.md")],
+                max_retries=0,
+            ),
+        ],
+        final_task_id="write-report",
+        goal_acceptance=[rule],
+    )
+    path, report = await run_goal(
+        "搜索文献并写出一份有来源的报告",
+        tmp_path / "runs",
+        rules=[rule],
+        profiles_dir=BUILTIN_PROFILES,
+        client_factory=lambda: client,
+    )
+
+    assert client.closed
+    assert report.status == "success", report.failure_reason
+    assert report.subtasks_passed == report.subtasks_total == 2
+    assert search_requests == [(query, "test-key", 1)]
+    assert {worker["agent_id"] for worker in client.planning_requests[0]["workers"]} == {
+        "researcher",
+        "writer",
+    }
+    artifacts = {
+        Path(artifact).name: (path.parent / artifact).read_text(encoding="utf-8")
+        for artifact in report.artifacts
+    }
+    assert artifacts == {
+        "source.md": f"{source_title}\n{source_url}\n",
+        "report.md": f"# 研究报告\n\n{source_title}\n{source_url}\n",
+    }
+    stored = GoalReport.model_validate_json(path.read_text(encoding="utf-8"))
+    assert stored.summary.goal_completion_rate == stored.summary.subtask_completion_rate == 1.0
+    events = [
+        json.loads(line)
+        for line in (path.parent / report.trace_path).read_text(encoding="utf-8").splitlines()
+    ]
+    assert [
+        (event["agent_id"], event["tool"], event["ok"])
+        for event in events
+        if event["event"] == "tool_finished"
+    ] == [
+        ("researcher", "web_search", True),
+        ("researcher", "file_write", True),
+        ("writer", "file_read", True),
+        ("writer", "file_write", True),
+    ]
+    handoff_event = next(event for event in events if event["event"] == "artifacts_handed_off")
+    assert handoff_event["task_id"] == "write-report"
+    assert handoff_event["inputs"] == [handoff.model_dump()]
+
+
+@pytest.mark.parametrize("search_key", [None, " \t"])
+async def test_goal_can_write_a_file_without_a_search_key(tmp_path, monkeypatch, search_key):
+    if search_key is None:
+        monkeypatch.delenv("SEARCH_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("SEARCH_API_KEY", search_key)
+    client = ScriptedClient()
+
+    path, report = await run_goal(
+        "写一份报告",
+        tmp_path / "runs",
+        profiles_dir=BUILTIN_PROFILES,
+        client_factory=lambda: client,
+    )
+
+    assert report.status == "success", report.failure_reason
+    assert [worker["agent_id"] for worker in client.planning_requests[0]["workers"]] == ["writer"]
+    assert len(report.artifacts) == 1
+    assert (path.parent / report.artifacts[0]).read_text(encoding="utf-8") == REPORT_TEXT
 
 
 async def test_no_plan_preserves_failed_goal_and_undefined_node_rate(
