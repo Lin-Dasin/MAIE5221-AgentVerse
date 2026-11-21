@@ -13,6 +13,7 @@ from protocol.models import (
     ExecutionContext,
     FailureCode,
     HITLDecision,
+    MemoryEvent,
     RunConfig,
     RunResult,
     Task,
@@ -20,7 +21,8 @@ from protocol.models import (
     TaskResult,
     TaskStatus,
 )
-from protocol.ports import Approver, Memory, Observer, Verifier, Worker
+from protocol.ports import Approver, Memory, MemoryObserver, Observer, Verifier, Worker
+from runtime.memory_events import notify_memory
 
 TERMINAL = {TaskStatus.SUCCESS, TaskStatus.FAILED, TaskStatus.BLOCKED}
 
@@ -47,12 +49,14 @@ class Scheduler:
         memory: Memory | None = None,
         observer: Observer | None = None,
         preflight: PlanPreflight | None = None,
+        memory_observer: MemoryObserver | None = None,
     ):
         self.worker = worker
         self.verifier = verifier
         self.approver = approver
         self.root = root
         self.memory = memory
+        self.memory_observer = memory_observer
         self.observer = observer
         self.preflight = preflight or PlanPreflight()
         self._running = False
@@ -203,11 +207,29 @@ class Scheduler:
         record.result.finished_at = datetime.now(UTC)
         await self._state(record, status)
         if self.config.write_memory and self.memory is not None:
+            error_type = None
             try:
                 async with asyncio.timeout(min(5, self.config.task_timeout_sec)):
                     await self.memory.reflect(record.task, record.result.model_copy(deep=True))
             except Exception as exc:
+                error_type = type(exc).__name__
                 record.result.warnings.append(f"Reflection failed: {type(exc).__name__}")
+            if self.memory_observer is not None:
+                warning = await notify_memory(
+                    self.memory_observer,
+                    MemoryEvent(
+                        run_id=self.config.run_id,
+                        task_id=record.task.task_id,
+                        agent_id=record.task.assignee,
+                        attempt=record.result.attempts,
+                        phase="reflected",
+                        ok=error_type is None,
+                        error_type=error_type,
+                    ),
+                    self.config.task_timeout_sec,
+                )
+                if warning:
+                    record.result.warnings.append(warning)
         self.worker.release(self.config.run_id, record.task.task_id)
         self.store.discard_snapshot(record.task.task_id)
 
@@ -276,6 +298,9 @@ class Scheduler:
                 raise TimeoutError
             async with asyncio.timeout(remaining):
                 outcome = await self.worker.execute(record.task, context)
+            record.result.warnings.extend(
+                warning for warning in outcome.warnings if warning not in record.result.warnings
+            )
             record.result.tokens += max(0, outcome.tokens - record.attempt_tokens)
             record.attempt_tokens = max(record.attempt_tokens, outcome.tokens)
             record.result.summary = outcome.summary

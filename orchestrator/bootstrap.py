@@ -8,7 +8,15 @@ from orchestrator.preflight import FILE_RULE_TYPES, PlanPreflight
 from orchestrator.scheduler import Scheduler
 from orchestrator.service import CollaborationService
 from protocol.models import AgentProfile, ToolDefinition
-from protocol.ports import Approver, Memory, ModelClient, Observer, ToolExecutor, Verifier
+from protocol.ports import (
+    Approver,
+    Memory,
+    MemoryObserver,
+    ModelClient,
+    Observer,
+    ToolExecutor,
+    Verifier,
+)
 from runtime.agent import AgentRuntime
 
 
@@ -25,6 +33,7 @@ def build_service(
     memory: Memory | None = None,
     observer: Observer | None = None,
     supported_acceptance_types: Collection[str] = FILE_RULE_TYPES,
+    memory_observer: MemoryObserver | None = None,
 ) -> CollaborationService:
     """Build one serial service using a shared memory adapter and model client.
 
@@ -33,6 +42,8 @@ def build_service(
     is omitted, runs must disable both memory_enabled and write_memory.
     supported_acceptance_types declares the supplied verifier's implemented
     rules; the default matches D's FileVerifier. This does not enable new checks.
+    memory_observer optionally receives metadata about retrieval, injection and
+    reflection, without changing the Memory or Observer adapters.
     """
     planner_profile = profiles.get(planner_id)
     if planner_profile is None or planner_profile.role != "planner":
@@ -44,7 +55,14 @@ def build_service(
         worker_ids=[worker.agent_id for worker in workers],
         supported_acceptance_types=supported_acceptance_types,
     )
-    runtime = AgentRuntime(model, executor, profiles, tool_definitions, memory=memory)
+    runtime = AgentRuntime(
+        model,
+        executor,
+        profiles,
+        tool_definitions,
+        memory=memory,
+        memory_observer=memory_observer,
+    )
     scheduler = Scheduler(
         runtime,
         verifier,
@@ -53,6 +71,7 @@ def build_service(
         memory=memory,
         observer=observer,
         preflight=preflight,
+        memory_observer=memory_observer,
     )
     return CollaborationService(
         Planner(model, planner_profile, preflight=preflight), scheduler, workers

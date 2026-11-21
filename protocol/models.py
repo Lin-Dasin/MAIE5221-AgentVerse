@@ -286,6 +286,7 @@ class AgentOutcome(Contract):
     request: HITLRequest | None = None
     failure_code: FailureCode | None = None
     retryable: bool = True
+    warnings: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
@@ -298,6 +299,24 @@ class AgentOutcome(Contract):
         if self.kind == "failed" and self.failure_code is None:
             raise ValueError("failed outcomes require a failure code")
         return self
+
+
+MemoryPhase = Literal["retrieved", "injected", "reflected"]
+
+
+class MemoryEvent(Contract):
+    """Metadata for optional Worker-memory observation; contains no memory text."""
+
+    run_id: Identifier
+    task_id: Identifier
+    agent_id: Identifier
+    attempt: int = Field(ge=0)
+    phase: MemoryPhase
+    ok: bool
+    context_chars: int = Field(default=0, ge=0)
+    context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    model_step: int | None = Field(default=None, ge=1)
+    error_type: str | None = None
 
 
 class ChatMessage(Contract):
