@@ -1,10 +1,12 @@
 """Persistent private and group conversations for local callers."""
 
+import json
+import math
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _EVENT_KINDS = ("message", "assignment", "delegation", "negotiation", "handoff")
@@ -30,6 +32,19 @@ CREATE TABLE IF NOT EXISTS message_events (
     timestamp TEXT NOT NULL,
     PRIMARY KEY (conversation_id, sequence),
     FOREIGN KEY (conversation_id, sender) REFERENCES conversation_members(conversation_id, member)
+);
+CREATE TABLE IF NOT EXISTS clarification_requests (
+    conversation_id TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    requester TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'answered', 'closed')),
+    answer TEXT,
+    PRIMARY KEY (conversation_id, request_id),
+    FOREIGN KEY (conversation_id, requester)
+        REFERENCES conversation_members(conversation_id, member),
+    CHECK ((state = 'answered') = (answer IS NOT NULL))
 );
 COMMIT;
 """
@@ -197,6 +212,142 @@ class MessageBus:
                 (conversation_id,),
             )
             return frozenset(member for (member,) in rows)
+
+    def request_clarification(
+        self,
+        conversation_id: str,
+        notifier: str,
+        requester: str,
+        *,
+        run_id: str,
+        request_id: str,
+        task_id: str,
+        question: str,
+        timeout_sec: float,
+    ) -> MessageEvent:
+        """Open a bounded request and show the question in the same group."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        notifier = _identifier(notifier, "Notifier")
+        requester = _identifier(requester, "Requester")
+        run_id = _identifier(run_id, "Run ID")
+        request_id = _identifier(request_id, "Request ID")
+        task_id = _identifier(task_id, "Task ID")
+        _require_text(question)
+        if (
+            type(timeout_sec) not in {int, float}
+            or timeout_sec > timedelta.max.total_seconds()
+            or not math.isfinite(timeout_sec)
+            or timeout_sec <= 0
+        ):
+            raise MessageBusError("Clarification timeout must be finite and positive")
+
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            kind = self._require_distinct_members(connection, conversation_id, notifier, requester)
+            if kind != "group":
+                raise MessageBusError("Clarification requires a group conversation")
+            try:
+                expires_at = datetime.now(UTC) + timedelta(seconds=timeout_sec)
+            except OverflowError:
+                raise MessageBusError("Clarification timeout is out of range") from None
+            try:
+                connection.execute(
+                    "INSERT INTO clarification_requests "
+                    "(conversation_id, request_id, run_id, requester, expires_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (conversation_id, request_id, run_id, requester, expires_at.timestamp()),
+                )
+            except sqlite3.IntegrityError:
+                raise MessageBusError("Clarification request already exists") from None
+            text = json.dumps(
+                {
+                    "event": "clarification_requested",
+                    "run_id": run_id,
+                    "request_id": request_id,
+                    "task_id": task_id,
+                    "question": question,
+                    "expires_at": expires_at.isoformat(),
+                },
+                ensure_ascii=False,
+            )
+            sequence = self._current_sequence(connection, conversation_id) + 1
+            return self._insert_event(
+                connection, conversation_id, sequence, notifier, "message", text
+            )
+
+    def reply_to_clarification(
+        self, conversation_id: str, sender: str, request_id: str, answer: str
+    ) -> MessageEvent:
+        """Record the authorized answer once and publish it to the group."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        sender = _identifier(sender, "Sender")
+        request_id = _identifier(request_id, "Request ID")
+        _require_text(answer)
+        answer = answer.strip()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_member(connection, conversation_id, sender)
+            row = connection.execute(
+                "SELECT run_id, requester, state, expires_at FROM clarification_requests "
+                "WHERE conversation_id = ? AND request_id = ?",
+                (conversation_id, request_id),
+            ).fetchone()
+            if row is None:
+                raise MessageBusError("No clarification request with that ID in this conversation")
+            run_id, requester, state, expires_at = row
+            if requester != sender:
+                raise PermissionError("Only the task requester can answer this clarification")
+            if state != "pending":
+                raise MessageBusError(f"Clarification request is already {state}")
+            if datetime.now(UTC).timestamp() >= expires_at:
+                raise MessageBusError("Clarification request has expired")
+            connection.execute(
+                "UPDATE clarification_requests SET state = 'answered', answer = ? "
+                "WHERE conversation_id = ? AND request_id = ?",
+                (answer, conversation_id, request_id),
+            )
+            text = json.dumps(
+                {
+                    "event": "clarification_answered",
+                    "run_id": run_id,
+                    "request_id": request_id,
+                    "answer": answer,
+                },
+                ensure_ascii=False,
+            )
+            sequence = self._current_sequence(connection, conversation_id) + 1
+            return self._insert_event(
+                connection, conversation_id, sequence, sender, "message", text
+            )
+
+    def get_clarification_answer(
+        self, conversation_id: str, run_id: str, request_id: str
+    ) -> str | None:
+        """Read a saved answer scoped to the waiting run."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        run_id = _identifier(run_id, "Run ID")
+        request_id = _identifier(request_id, "Request ID")
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT answer FROM clarification_requests "
+                "WHERE conversation_id = ? AND run_id = ? AND request_id = ? "
+                "AND state = 'answered'",
+                (conversation_id, run_id, request_id),
+            ).fetchone()
+        return row[0] if row else None
+
+    def close_clarification(self, conversation_id: str, run_id: str, request_id: str) -> None:
+        """Close a request that is still waiting when its run stops polling."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        run_id = _identifier(run_id, "Run ID")
+        request_id = _identifier(request_id, "Request ID")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "UPDATE clarification_requests SET state = 'closed' "
+                "WHERE conversation_id = ? AND run_id = ? AND request_id = ? AND state = 'pending'",
+                (conversation_id, run_id, request_id),
+            )
 
     def record_chat_exchange(
         self,

@@ -55,6 +55,26 @@ python -m ui.cli messages --db $db history p2-team --as-id writer
 
 The history includes the goal, handoff notices and final status with artifact
 and report paths. All events for the goal carry its run ID. Each command
-executes in a fresh run directory and uses the existing terminal clarification
-flow. The Planner receives the goal from `--goal`. Group history remains
-available when reading the conversation or using `messages chat`.
+executes in a fresh run directory. The Planner receives the goal from
+`--goal`. Group history remains available when reading the conversation or
+using `messages chat`.
+
+## Answer a group clarification
+
+Keep the terminal running the group task open. If a Worker asks a clarification
+question, the CLI prints the request ID and posts the question in the same
+group. In another terminal from the same repository, read that group's history
+and answer as the user who started the run, using the same database and
+conversation ID:
+
+```powershell
+$db = 'results/group-p2.sqlite3'
+python -m ui.cli messages --db $db history p2-team --as-id user
+python -m ui.cli messages --db $db reply p2-team --sender user --request-id '<request_id>' --text '项目进度'
+```
+
+Each request accepts a single answer for its original run. The default deadline
+is 60 seconds, configurable with `messages run --clarification-timeout SECONDS`.
+An expired clarification and the final run status appear in the conversation.
+The reply command covers text clarification. Permission decisions continue to
+follow the run policy.

@@ -2,13 +2,15 @@
 
 import asyncio
 import json
+import math
 from pathlib import Path
 from uuid import uuid4
 
 from bus.messages import MessageBus, MessageBusError
 from harness.metrics import CaseReport
-from protocol.models import AcceptanceRule, InputRef, Task, TaskGraph
+from protocol.models import AcceptanceRule, HITLDecision, HITLRequest, InputRef, Task, TaskGraph
 from ui.goal import ConsoleTrace, run_goal
+from ui.group_clarification import GroupClarification
 
 
 def _event(event: str, run_id: str, **fields: object) -> str:
@@ -50,6 +52,20 @@ class GroupTrace(ConsoleTrace):
         except (MessageBusError, OSError) as error:
             self.warnings.append(f"Group handoff notification failed: {type(error).__name__}")
 
+    async def hitl_decided(self, run_id: str, request: HITLRequest, decision: HITLDecision) -> None:
+        await super().hitl_decided(run_id, request, decision)
+        if request.kind == "clarification" and decision.source == "timeout":
+            event = _event(
+                "clarification_timed_out",
+                run_id,
+                request_id=request.request_id,
+                task_id=request.task_id,
+            )
+            try:
+                self.bus.publish(self.conversation, self.notifier, "message", event)
+            except (MessageBusError, OSError) as error:
+                self.warnings.append(f"Group timeout notification failed: {type(error).__name__}")
+
 
 async def run_group_goal(
     bus: MessageBus,
@@ -61,11 +77,14 @@ async def run_group_goal(
     *,
     rules: list[AcceptanceRule] | None = None,
     profiles_dir: Path | None = None,
+    clarification_timeout_sec: float = 60,
 ) -> tuple[Path, CaseReport]:
     sender, notifier = sender.strip(), notifier.strip()
     goal = goal.strip()
     if not goal:
         raise ValueError("Goal must contain text")
+    if not math.isfinite(clarification_timeout_sec) or clarification_timeout_sec <= 0:
+        raise ValueError("Clarification timeout must be finite and positive")
     worker_ids = bus.group_members(conversation, sender, notifier) - {sender, notifier}
     if not worker_ids:
         raise ValueError("Add a Worker to the group before submitting a task")
@@ -85,6 +104,10 @@ async def run_group_goal(
             run_id=run_id,
             worker_ids=worker_ids,
             trace_factory=trace_factory,
+            ask=GroupClarification(
+                bus, conversation, sender, notifier, run_id, timeout_sec=clarification_timeout_sec
+            ),
+            approval_timeout_sec=clarification_timeout_sec,
         )
     except asyncio.CancelledError:
         bus.publish(conversation, notifier, "message", _event("run_cancelled", run_id))
