@@ -208,7 +208,7 @@ For a new live run, set `LLM_MODEL=deepseek-flash` in the local environment
 file. This is the model ID listed in the current
 [DeepSeek model table](https://api-docs.deepseek.com/quick_start/pricing/).
 
-## Search evaluation pilot
+## T1 search evaluation
 
 On 2026-11-10, T1 ran against `main` commit `3a8567e`, which includes Role B's
 search adapter from PR #15. A fixed researcher-to-writer graph checked a Python
@@ -218,9 +218,35 @@ URL from each search query and the corresponding fact in the final Markdown.
 Both the scripted run and the DeepSeek run with simulated Tavily responses
 passed 1/1 goals, 2/2 nodes and 3/3 goal checks. The DeepSeek request and response
 both identified `deepseek-flash`. The run used an archive-relative handoff path
-in the fixed graph. The true Tavily run and the natural-language handoff in
-[issue #17](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/issues/17) remain open.
-The local evidence is under `results/baselines/search-t1-20261110/`.
+in the fixed graph. The local evidence is under
+`results/baselines/search-t1-20261110/`.
+
+On 2026-11-21, D reran the same two-source fixed graph with real DeepSeek and
+Tavily on a branch based on `develop` at `e085c0d`. The model request used
+`deepseek-chat`. Each query was limited to two results. Both requests returned
+HTTP 200 and each response contained the official URL assigned to that query.
+The accepted Markdown paired the [Python 3.13.0 release page](https://www.python.org/downloads/release/python-3130/)
+with `2024-10-07` and [PEP 703](https://peps.python.org/pep-0703/) with
+`--disable-gil`. The researcher archive, writer input and final report matched
+byte-for-byte.
+
+| Goals | Subtasks | Fixed acceptance checks | Fixed-graph time | Worker tokens |
+| ---: | ---: | ---: | ---: | ---: |
+| 1/1 | 2/2 | 3/3 | 17.91 s | 15,602 |
+
+The JSON, trace and verification summary are in the local run directory
+`results/baselines/t1-live-20261121/130414-103730/` (run
+`bbd23bc4a11646fda4145703ab745912`). Export `LLM_BASE_URL`, `LLM_MODEL`,
+`LLM_API_KEY` and `SEARCH_API_KEY` in the current shell to repeat the case. Use a
+fresh output directory for each run.
+
+```powershell
+python -m harness.t1 --output-dir results/t1-live-recheck
+```
+
+T1 starts from the fixed graph. [Issue #17](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/issues/17)
+tracks natural-language handoff planning. [PR #32](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/32)
+records a separate single-source CLI run that included planning.
 
 ## Terminal clarification pilot
 
@@ -303,8 +329,8 @@ change, so this run is evidence for that integration combination.
 
 The team plan calls for three cases in each of five categories, with first
 metrics due November 8. The five groups below are proposed for team review.
-The live file pilot covers F1–F3. T1 uses simulated Tavily responses. The four
-cases in the offline `dev` batch are a runnable subset of this plan.
+The live file pilot covers F1–F3. T1 now also has a real Tavily fixed-graph run.
+The four cases in the offline `dev` batch are a runnable subset of this plan.
 
 | ID | Category | Task and acceptance | Status or dependency |
 |---|---|---|---|
@@ -317,7 +343,7 @@ cases in the offline `dev` batch are a runnable subset of this plan.
 | H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Offline terminal demo and automated stdin checks passed. |
 | H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Automated terminal input and real file tool passed. |
 | H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Expected denial control passed. |
-| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Scripted and DeepSeek fixture runs passed. Pending real Tavily run. |
+| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Real Tavily and DeepSeek fixed-graph run passed. Both official sources and 3/3 checks verified. |
 | T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | B's PR #23 supplies a host-subprocess pytest runner. D can integrate trusted fixtures on the PR revision. Container isolation remains pending. |
 | T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | PR #23 supplies Git tools. A local commit can be tested on that revision. Remote acceptance requires an authorized sandbox repository and an approved push. |
 | M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Local live English pilot verified persistence. |
@@ -341,7 +367,8 @@ can use the commands below.
 | P2 offline | `python -m harness.p2 check RUN_DIR` | Recompute the verdict from a saved run directory, including both handoffs, successful reads and the accepted final text. Exit 0 means pass, 1 means failed checks, 2 means unusable input or command error. |
 | H1 | `python -m ui.cli h1` | Interactive clarification and accepted output. |
 | H2, H3 | `python -m ui.cli permission --scenario h2` or `h3` | Approval control and raw task outcome, reported separately. |
-| T1–T3 | See tool cases above | T1 has a fixture-backed search pilot. B can run the real Tavily check with their locally configured key. T2/T3 integration can target PR #23 before merge. |
+| T1 | `python -m harness.t1 --output-dir results/t1-live-recheck` | Runs the two fixed source queries with Tavily and checks both URL–fact pairs in the archived report. |
+| T2/T3 | See tool cases above | T2/T3 integration can target PR #23 before merge. |
 | M1, M2, M3 | `python -m harness.memory_recall --output results/m2.json` for M2 | The current offline executable measures top-one recall. M1 reflection and M3 memory on/off are separate historical pilots. |
 
 On November 19 D checked B's proposed interfaces in a separate source snapshot
