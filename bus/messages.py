@@ -59,6 +59,11 @@ def _identifier(value: str, label: str) -> str:
     return value.strip()
 
 
+def _require_text(text: str) -> None:
+    if not isinstance(text, str) or not text.strip():
+        raise MessageBusError("Event text must be a non-empty string")
+
+
 class MessageBus:
     """Store member-visible events. The caller supplies each local identity."""
 
@@ -113,31 +118,117 @@ class MessageBus:
         if row is None:
             raise PermissionError("Identity is not a member of this conversation")
 
+    def _require_distinct_members(
+        self, connection: sqlite3.Connection, conversation_id: str, sender: str, agent_id: str
+    ) -> str:
+        if sender == agent_id:
+            raise MessageBusError("The sender and recipient must be distinct members")
+        self._require_member(connection, conversation_id, sender)
+        self._require_member(connection, conversation_id, agent_id)
+        (kind,) = connection.execute(
+            "SELECT kind FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        ).fetchone()
+        return kind
+
+    @staticmethod
+    def _current_sequence(connection: sqlite3.Connection, conversation_id: str) -> int:
+        (sequence,) = connection.execute(
+            "SELECT COALESCE(MAX(sequence), 0) FROM message_events WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        return sequence
+
+    @staticmethod
+    def _insert_event(
+        connection: sqlite3.Connection,
+        conversation_id: str,
+        sequence: int,
+        sender: str,
+        kind: str,
+        text: str,
+    ) -> MessageEvent:
+        timestamp = datetime.now(UTC).isoformat()
+        connection.execute(
+            "INSERT INTO message_events "
+            "(conversation_id, sequence, sender, kind, text, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (conversation_id, sequence, sender, kind, text, timestamp),
+        )
+        return MessageEvent(conversation_id, sequence, sender, kind, text, timestamp)
+
     def publish(self, conversation_id: str, sender: str, kind: str, text: str) -> MessageEvent:
         conversation_id = _identifier(conversation_id, "Conversation ID")
         sender = _identifier(sender, "Sender")
         if kind not in _EVENT_KINDS:
             raise MessageBusError(f"Event kind must be one of: {', '.join(_EVENT_KINDS)}")
-        if not isinstance(text, str) or not text.strip():
-            raise MessageBusError("Event text must be a non-empty string")
+        _require_text(text)
 
         with self._connection() as connection:
             # Serialize sequence allocation and insertion across database connections.
             connection.execute("BEGIN IMMEDIATE")
             self._require_member(connection, conversation_id, sender)
-            sequence = connection.execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM message_events "
-                "WHERE conversation_id = ?",
+            sequence = self._current_sequence(connection, conversation_id) + 1
+            return self._insert_event(connection, conversation_id, sequence, sender, kind, text)
+
+    def chat_history(
+        self, conversation_id: str, sender: str, agent_id: str
+    ) -> tuple[str, list[MessageEvent]]:
+        """Read the conversation kind and history after validating both participants."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        sender = _identifier(sender, "Sender")
+        agent_id = _identifier(agent_id, "Agent ID")
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            kind = self._require_distinct_members(connection, conversation_id, sender, agent_id)
+            return kind, self._history(connection, conversation_id, after=0)
+
+    def group_members(self, conversation_id: str, sender: str, notifier: str) -> frozenset[str]:
+        """Check the identities for a group run and return its eligible member IDs."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        sender = _identifier(sender, "Sender")
+        notifier = _identifier(notifier, "Notifier")
+        with self._connection() as connection:
+            connection.execute("BEGIN")
+            kind = self._require_distinct_members(connection, conversation_id, sender, notifier)
+            if kind != "group":
+                raise MessageBusError("Starting a task requires a group conversation")
+            rows = connection.execute(
+                "SELECT member FROM conversation_members WHERE conversation_id = ?",
                 (conversation_id,),
-            ).fetchone()[0]
-            timestamp = datetime.now(UTC).isoformat()
-            connection.execute(
-                "INSERT INTO message_events "
-                "(conversation_id, sequence, sender, kind, text, timestamp) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (conversation_id, sequence, sender, kind, text, timestamp),
             )
-        return MessageEvent(conversation_id, sequence, sender, kind, text, timestamp)
+            return frozenset(member for (member,) in rows)
+
+    def record_chat_exchange(
+        self,
+        conversation_id: str,
+        sender: str,
+        agent_id: str,
+        text: str,
+        reply: str,
+        *,
+        expected_sequence: int,
+    ) -> MessageEvent:
+        """Append both messages only if the conversation still matches the read snapshot."""
+        conversation_id = _identifier(conversation_id, "Conversation ID")
+        sender = _identifier(sender, "Sender")
+        agent_id = _identifier(agent_id, "Agent ID")
+        _require_text(text)
+        _require_text(reply)
+        if type(expected_sequence) is not int or expected_sequence < 0:
+            raise MessageBusError("Expected sequence must be a non-negative integer")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_distinct_members(connection, conversation_id, sender, agent_id)
+            if self._current_sequence(connection, conversation_id) != expected_sequence:
+                raise MessageBusError(
+                    "Conversation changed while waiting for the reply. Try again."
+                )
+            self._insert_event(
+                connection, conversation_id, expected_sequence + 1, sender, "message", text
+            )
+            return self._insert_event(
+                connection, conversation_id, expected_sequence + 2, agent_id, "message", reply
+            )
 
     def history(
         self, conversation_id: str, requester: str, *, after: int = 0
@@ -149,9 +240,15 @@ class MessageBus:
         with self._connection() as connection:
             connection.execute("BEGIN")
             self._require_member(connection, conversation_id, requester)
-            rows = connection.execute(
-                "SELECT conversation_id, sequence, sender, kind, text, timestamp "
-                "FROM message_events WHERE conversation_id = ? AND sequence > ? ORDER BY sequence",
-                (conversation_id, min(after, 2**63 - 1)),
-            ).fetchall()
+            return self._history(connection, conversation_id, after=after)
+
+    @staticmethod
+    def _history(
+        connection: sqlite3.Connection, conversation_id: str, *, after: int
+    ) -> list[MessageEvent]:
+        rows = connection.execute(
+            "SELECT conversation_id, sequence, sender, kind, text, timestamp "
+            "FROM message_events WHERE conversation_id = ? AND sequence > ? ORDER BY sequence",
+            (conversation_id, min(after, 2**63 - 1)),
+        )
         return [MessageEvent(*row) for row in rows]
