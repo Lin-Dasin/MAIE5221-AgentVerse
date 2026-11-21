@@ -48,23 +48,44 @@ is UTF-8 and ends with one LF.
 sum_of_squares_1_to_5 = 55
 ```
 
-## Evidence for one run
+## Run the fixed graph
 
 Build the sandbox image and set `CODE_EXEC_BACKEND=docker`.
 [Docker setup instructions](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/blob/25f50f0365c79898fc3804a222e31d2c76c75b38/docker/README.md)
 
-Use a fixed-graph runner that registers `code_exec`. Start with a fresh run
-directory so the file has no prior version. Keep the report, trace and
-verification output under the ignored
-`results/baselines/docker-calculation-<date>/` directory.
+Export `LLM_BASE_URL`, `LLM_MODEL` and `LLM_API_KEY` for the DeepSeek Worker.
+From the repository root, run the dedicated entry point in a checkout with the
+Docker backend and `coder` profile. The runner creates one fresh batch directory.
+
+```powershell
+$env:CODE_EXEC_BACKEND = 'docker'
+python -m harness.docker_calculation --work-dir results/docker-calculation
+```
+
+`--profiles-dir` can point to a profile directory containing `planner` and
+`coder`. The fixed task exposes only `code_exec` to the Worker and forwards the
+fixture program. A different program or a repeated call fails the control.
+Exit `2` indicates a missing prerequisite. Exit `1` indicates a failed run.
+
+## Evidence for one run
+
+The batch directory contains `evaluation.json`, a case `trace.jsonl`, and
+`control.json` with per-call facts. Verify the following together.
 
 - Match the run ID and task ID in the trace and evaluation report. For
   `compute`, require exactly one tool completion, a successful `code_exec`.
-- Capture that same call's result at the executor boundary. Require
-  `ToolResult.ok=true`, `data.backend="docker"`, integer `data.exit_code=0`,
-  and `data.stdout.strip() == "55"`. The trace records the tool and success
-  flag. The tool result supplies the backend and program exit code.
+- Match the call in `control.json` to the case. Require `executed=true`,
+  `ok=true`, `backend="docker"`, `exit_code=0` and `stdout_matches=true`.
+  The harness derives these fields from the same `ToolResult` and compares
+  its stripped stdout with `55`.
 - Check that `workspaces/coder/outputs/calculation.md` and
   `artifacts/<run_id>/compute/calculation.md` both match the expected bytes.
 - Require one successful goal and one successful task in `evaluation.json`,
   with goal and subtask completion rates both equal to `1.0`.
+
+The offline test uses model and tool substitutes to check that an incorrect
+backend, a nonzero exit, extra artifact bytes and a changed program all fail.
+
+```powershell
+python -m pytest -q tests/harness/test_docker_calculation.py
+```
