@@ -1,12 +1,12 @@
 # Usage and B/C/D Integration Guide
 
-Updated: 2026-11-11. Scope: the current Role A implementation and integration contracts.
+Updated: 2026-11-21. Scope: the current Role A implementation and integration contracts.
 
 This guide distinguishes existing code, implementations required from teammates, and follow-up development involving multiple roles. Passing local tests does not establish that real APIs, containers, tools or official evaluation are complete. The current alignment still requires normal PR review.
 
 ## 1. What Is Available Now
 
-The implementation provides planning, dependency execution, approval pauses, sub-delegation and accepted artifact handoffs. The repository now also contains B's file/search/host Python tools, C's JSONL memory and profiles, and D's file verifier, JSONL traces and offline harness. Container isolation, Git tools, conversational UI and complete live evaluation remain integration work. The smoke script assembles real file/search/verifier/trace adapters with memory disabled.
+The implementation provides planning, dependency execution, approval pauses, sub-delegation and accepted artifact handoffs. The repository also contains B's file/search/host Python/Git tools, C's JSONL memory and profiles, and D's verifier, JSONL traces, CLI and offline harness. Local Git and trusted host pytest have acceptance controls; container isolation, hosted Git evaluation, full multi-agent chat routing and complete live evaluation remain integration work. The smoke script assembles real file/search/verifier/trace adapters with memory disabled.
 
 | Module | Existing functionality | Boundaries and follow-up work |
 | --- | --- | --- |
@@ -168,7 +168,7 @@ with publication so the mapping removes exactly one leading `outputs/`.
 | Final goal acceptance | `notes.md` |
 
 Planner drafts and negotiated plans both undergo preflight. A rejected candidate
-gets a diagnostic and at most one repair per generation, still bounded by
+gets a diagnostic and at most two repairs per generation (three attempts total), bounded by
 `max_planning_calls` and the token budget. Dataset rules are never silently
 rewritten or weakened. Unsupported externally supplied goal rules fail before a
 model call. `run_goal()` returns a failure record and retains useful plan-error
@@ -179,8 +179,11 @@ suspension; a bad request fails the parent with `invalid_output`.
 The optional `build_service(supported_acceptance_types=...)` argument defaults to
 `{"file_exists", "text_contains"}`, matching D's current `FileVerifier`. It is an
 explicit declaration by the application about the supplied verifier, not a new
-evaluator. Enable `pytest_passes` only after B/D supply its isolated execution
-implementation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
+evaluator. D now exposes `FileVerifier(pytest_runner=...)` and
+`verifier.supported_acceptance_types`; B supplies a host runner for trusted fixtures.
+Pass that set explicitly to `build_service()` for the configured verifier. Keep
+the file-only default for ordinary runs; generated code still needs container
+isolation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
 only configured `worker_ids` enable its registry check. Production callers should
 use `build_service()` to keep both stages consistent.
 
@@ -188,6 +191,22 @@ Preflight does not execute tools, test file existence/content, infer semantic
 capability matches, or replace D's acceptance decisions. Paths remain exact,
 case-sensitive file declarations; supported future non-file rules retain their
 adapter-specific path semantics.
+
+Planner specialist bids reserve three remaining calls for final generation and
+repair: a bid is requested only when at least four calls remain. The total
+`max_planning_calls`, token and time limits still apply; increasing repair attempts
+does not increase them. Invalid input paths are repaired with explicit examples:
+`outputs/report.md` is published as `report.md`, handed off to `inputs/report.md`,
+and read using the input's `as` destination. Node output checks retain `outputs/`.
+Preflight also rejects a node file rule that mistakenly uses the archive path of
+a declared output, while preserving declared input and auxiliary workspace checks.
+
+Each task title must preserve its relevant topic, exact labels, output format and
+input-reading/copying instructions because Workers do not receive the original
+goal. These rules live in the shared Planner, including default P2 profiles. Run
+`python -m harness.p2 run --work-dir results/p2-role-a` without `--guided` after
+exporting model credentials; inspect its `p2-check.json`, not just file existence.
+Offline repair/handoff tests do not establish real-model P2 completion.
 
 Use a new `run_id` for every run. Identifier permits only letters, digits, underscores and hyphens; do not use a timestamp containing colons directly. The default `RunConfig()` generates a valid ID.
 
@@ -251,6 +270,43 @@ Both flags default to True in `RunConfig()`. Without Memory, explicitly disable 
 
 Control the model, tasks, prompts, acceptance rules and budgets, and record both flags and the starting memory snapshot. Experiments may compare frozen histories or task-by-task evolution in separate memory stores. Report actual effects without presuming improvement.
 
+### Worker Memory Lifecycle Check
+
+`build_service(memory=..., memory_observer=...)` accepts an optional
+`MemoryObserver` with `async memory_event(event: MemoryEvent)`. It is separate
+from the existing task `Observer` and does not change `Memory.retrieve()` or
+`Memory.reflect()`. One retrieval occurs when a new Worker attempt starts;
+`injected` records the result of each model-client call carrying that context,
+including empty context, and `reflected` reports the terminal write. Disabled
+reads emit neither retrieval nor injection events. Writes are controlled
+independently, and a failed/blocked task can still produce a reflection.
+
+The event carries run/task/agent/attempt identifiers, phase, outcome, optional
+model step, context length and SHA-256, and an exception type on failure. It
+contains no memory text, prompt, credentials or reasoning. A bounded callback
+failure is recorded as a task warning. `injected` proves context reached the model
+client call; task acceptance is separate evidence that the model used it. D may
+adapt the callback to the common trace; existing trace observers still work.
+
+From the repository root:
+
+```bash
+python -m scripts.worker_memory_demo --mock
+python -m scripts.worker_memory_demo --mock --disable-recall
+python -m scripts.worker_memory_demo --live
+```
+
+The live command requires exported DeepSeek variables and makes actual paid
+calls. Each invocation creates a fresh root. It runs two fixed Chinese tasks with
+distinct run IDs, the same Worker and `JsonlMemory`, and only `file_write` access.
+The second task's prompt and tools cannot access the first output or its random
+marker except through retrieved memory. The host verifier checks that marker;
+`--disable-recall` expects the second node to succeed and its final goal to fail
+on the missing marker. `memory-control.json` ties request digests to metadata in
+`trace.jsonl`; the per-run results, accepted files and private JSONL snapshot are
+kept in that local directory. This is a Worker integration check, separate from
+P2 autonomous planning, M2 retrieval selection and M3 effectiveness metrics.
+
 ### Follow-Up Joint Development
 
 - A/C: automatic Planner retrieval/reflection and Critic Agent execution/memory. Workers currently have memory call sites; the Planner has only an external `memory_context` parameter.
@@ -266,9 +322,33 @@ The single rule interpreter in `harness/verdict.py` conforms to `Verifier.check(
 
 - `file_exists`: check the specified artifact.
 - `text_contains`: check for the specified nonempty text.
-- `pytest_passes`: still requires B's isolated executor integration; default plan preflight rejects it before execution.
+- `pytest_passes`: available when a runner is explicitly supplied to `FileVerifier` and its capability set is passed to A. The current host runner is used only for trusted fixtures; the default file-only preflight still rejects this rule.
 
 Do not use the default-passing `StubVerifier` from `tests/helpers.py` as the real verifier. File existence or a Sources section does not establish factual accuracy. For richer official criteria, D/A must extend the rule model and evaluator implementation.
+
+### T2 Verdicts and T3 Approval Ordering
+
+The A-side assembly is `build_service(verifier=verifier,
+supported_acceptance_types=verifier.supported_acceptance_types, ...)`. Node checks
+run in the workspace and final checks run in the archive. Failed node checks feed
+their defects to a bounded retry and prevent publication; exhausted failures block
+dependent tasks. A successful node does not override a failed final-goal check.
+Runner-reported pytest timeouts are `acceptance_failed` with timeout evidence in
+the critique; a scheduler deadline expiring is `timeout`.
+
+Protected tool calls are held until a matching decision. Denial and approval
+timeout terminate the attempt with `status=failed`, `failure_code=hitl_blocked`,
+without automatic retries or execution of the rest of the queued calls. A wrong
+request ID fails with `invalid_output`. Each protected call needs its own decision,
+including multiple pushes in one model response. `hitl_decided` precedes the
+approved executor call. Dependent nodes may then be `blocked`.
+
+`python -m harness.t2` and `python -m harness.t3` remain D's acceptance commands.
+T2 control success expects raw goals/nodes 1/4; T3 expects approval success and
+denial failure with unchanged remote refs. A's file verdict alone cannot prove Git
+publication: D checks the named branch, full commit and blob. These controls use
+trusted host pytest fixtures and a local bare Git repository, not container or
+hosted-Git evaluation.
 
 ### Events, Human Responses and Chat
 

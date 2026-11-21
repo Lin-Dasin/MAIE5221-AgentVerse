@@ -1,6 +1,6 @@
 # Section 2 — Routing and Collaboration Logic
 
-Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-11-11; team review pending.
+Owner: Role A (Wang / Luhkel-04). Implementation draft, updated 2026-11-21; team review pending.
 
 ## Status and scope
 
@@ -27,9 +27,9 @@ Implemented:
 - Typed integration ports, editable package installation, CI dependency installation,
   and offline tests including a synthetic goal-to-artifact workflow.
 
-The repository includes B's file/search/host Python tools, C's profiles and JSONL
+The repository includes B's file/search/host Python/Git tools, C's profiles and JSONL
 memory, and D's file verdicts, JSONL traces and offline harness. Remaining gaps
-include containers, Git tools, conversational routing/UI and full live evaluation.
+include containers, hosted Git evaluation, full conversational routing and live evaluation.
 The 2026-11-11 regressions use mocked HTTP, including a smoke-script workflow with
 real file/trace/verifier adapters; no new live-provider result is claimed. The
 client does not implement HKGAI. Container isolation remains B's responsibility;
@@ -65,8 +65,9 @@ The following details are implementation proposals for B/C/D review:
 1. `TaskGraph` includes `tasks`, `final_task_id`, `goal_acceptance` and `summary`.
    Planner-created nodes have depth 0. Dynamic child nodes are added by A only.
 2. `AcceptanceRule` uses `type`, `path` and optional `text`. D implements
-   `file_exists` and `text_contains` in its current evaluator; `pytest_passes`
-   remains unavailable until B/D integrate isolated test execution. The shared
+   `file_exists` and `text_contains`; `pytest_passes` is enabled when a runner is
+   supplied to D's evaluator. B/D's trusted-fixture host runner is now integrated;
+   generated code still requires container isolation. The shared
    preflight defaults to the two implemented types; the application explicitly
    declares additional support through `build_service(supported_acceptance_types=...)`.
    Meaningful content requirements need corresponding D-owned checks; a file
@@ -111,7 +112,12 @@ point for C; worker-memory retrieval is implemented in the runtime.
 declared upstream outputs after the archive mapping, and goal file checks must
 name published outputs of the final task. Unsupported externally supplied goal
 rules fail before a model call. A generated invalid graph receives its specific
-diagnostic and one bounded repair opportunity per generation. Fixed graphs are
+diagnostic and two bounded repair opportunities per generation (three attempts).
+Specialist bids reserve three calls for the final generation/repair cycle. Shared
+prompts demonstrate both path roots and require self-contained task instructions,
+including topics, exact markers and read/copy requirements. Node file checks that
+use the archive name of a declared output are rejected with its workspace path;
+declared input and unrelated workspace checks retain their meaning. Fixed graphs are
 checked before workspace creation; dynamic children are checked before insertion
 or parent suspension. Dataset criteria are not rewritten. These declaration
 checks do not evaluate actual file content or semantic Worker capabilities.
@@ -185,6 +191,16 @@ pending call; other queued calls remain pending. Every approved protected call
 therefore has its own decision record. D chooses the private/group channel for
 questions and may broadcast appropriate summaries, not internal payloads.
 
+The 2026-11-21 regressions exercise the public composition with D's real verifier
+and B's trusted pytest runner: failures feed retry defects, exhausted nodes never
+publish, dependents block, and a failed archive verdict keeps the overall goal
+failed even when its node succeeded. Runner timeouts are acceptance failures with
+details in the critique; scheduler deadlines use the separate timeout code.
+Approval regressions cover denied/expired/mismatched decisions with nonzero retry
+budgets, discarding queued operations, and two pushes requiring distinct approvals.
+Denied/expired tasks have status `failed` and code `hitl_blocked`; `blocked` is used
+for dependent tasks. No new evaluator or Git implementation is introduced by A.
+
 ## Message storage and conversation history
 
 Role D stores conversations, fixed membership and ordered message events in
@@ -245,6 +261,19 @@ fields. Request serialization, error handling and bounded retries are centralize
 in `runtime/client.py`; `scripts/live_smoke.py` now uses that client and
 `run_goal()`, with cleanup on every exit. Its goal check uses archive-relative
 `notes.md`, fixing the previous `outputs/notes.md` mismatch.
+
+## Worker memory lifecycle
+
+Worker memory can now be observed through the optional `MemoryObserver` port.
+Runtime emits retrieval and model-client injection results; Scheduler emits
+terminal reflection results. The callback carries only correlation identifiers,
+state, context length/digest and error type, never private text. D can persist it
+using the same trace envelope. The Worker memory example composes the real C
+adapter with two related Chinese tasks and B's file tool, verifies the model
+request's context digest and tests whether the second artifact uses a marker
+available only through memory. A mock negative control disables recall in the
+second task. See the [integration guide](../usage-and-integration.md#worker-memory-lifecycle-check)
+for credentialed reproduction. This evidence does not measure M3 effectiveness.
 
 ## Remaining lifecycle contracts
 

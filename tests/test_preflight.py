@@ -114,7 +114,7 @@ async def test_negotiated_plan_is_rechecked_and_dataset_rules_remain_authoritati
 async def test_contract_repair_exhaustion_retains_actionable_diagnostic():
     invalid = linked_graph()
     break_contract(invalid, "goal")
-    model = ScriptedModel(invalid.model_dump_json(), invalid.model_dump_json())
+    model = ScriptedModel(*[invalid.model_dump_json()] * 3)
     with pytest.raises(PlanningError, match="not published by final task"):
         await Planner(model, profile("planner", role="planner")).plan(
             "Write a report",
@@ -122,7 +122,7 @@ async def test_contract_repair_exhaustion_retains_actionable_diagnostic():
             config(),
             negotiate=False,
         )
-    assert len(model.calls) == 2
+    assert len(model.calls) == 3
 
 
 def service_for(tmp_path, model):
@@ -209,3 +209,127 @@ def test_additional_rule_requires_explicit_adapter_configuration():
     )
     with pytest.raises(ValueError, match="known acceptance rules"):
         PlanPreflight(supported_acceptance_types={"invented_rule"})
+
+
+async def test_third_generation_repairs_path_and_runs_real_handoffs(tmp_path):
+    from harness.verdict import FileVerifier
+    from protocol.models import ToolCall
+    from tests.test_runtime import write_tool
+
+    valid = linked_graph()
+    invalid = valid.model_copy(deep=True)
+    break_contract(invalid, "input")
+    model = ScriptedModel(
+        invalid.model_dump_json(),
+        invalid.model_dump_json(),
+        valid.model_dump_json(),
+        ModelResponse(
+            tool_calls=[
+                ToolCall(
+                    call_id="first",
+                    name="file_write",
+                    arguments={
+                        "path": "outputs/first.md",
+                        "text": "original upstream text",
+                    },
+                )
+            ]
+        ),
+        "First file ready",
+        ModelResponse(
+            tool_calls=[
+                ToolCall(
+                    call_id="last",
+                    name="file_write",
+                    arguments={
+                        "path": "outputs/last.md",
+                        "text": "final report",
+                    },
+                )
+            ]
+        ),
+        "Last file ready",
+    )
+    service = build_service(
+        root=tmp_path,
+        model=model,
+        profiles={
+            "planner": profile("planner", role="planner"),
+            "writer": profile(tools=["file_write"]),
+        },
+        tool_definitions=[write_tool()],
+        executor=FixtureTools(tmp_path),
+        verifier=FileVerifier(),
+        approver=PolicyApprover(),
+    )
+    result = await service.run_goal("Write a two-task report", config(max_planning_calls=3))
+    assert result.goal_verdict.passed
+    assert len(result.tasks) == 2
+    assert (tmp_path / "workspaces/writer/inputs/brief.md").read_text() == "original upstream text"
+    assert "not published by first" in model.calls[2][0][-1].content
+
+
+async def test_bids_reserve_three_final_generation_calls():
+    valid = linked_graph()
+    invalid = valid.model_copy(deep=True)
+    break_contract(invalid, "goal")
+    bid = '{"task_ids":["last"],"rationale":"Can write"}'
+    model = ScriptedModel(
+        valid.model_dump_json(),
+        bid,
+        bid,
+        invalid.model_dump_json(),
+        invalid.model_dump_json(),
+        valid.model_dump_json(),
+    )
+    result = await Planner(model, profile("planner", role="planner")).plan(
+        "Write a report",
+        [profile(), profile("other"), profile("third")],
+        config(max_planning_calls=6),
+    )
+    assert result.tasks == valid.tasks and len(model.calls) == 6
+    assert "Specialist bids" in result.summary
+    assert "third requested" not in result.summary
+
+
+async def test_budget_still_caps_repair_calls():
+    model = ScriptedModel("invalid", "invalid")
+    with pytest.raises(PlanningError, match="budget"):
+        await Planner(model, profile("planner", role="planner")).plan(
+            "Write a report",
+            [profile()],
+            config(max_planning_calls=2),
+            negotiate=False,
+        )
+    assert len(model.calls) == 2
+
+
+async def test_node_acceptance_path_repaired_before_execution():
+    valid = linked_graph()
+    invalid = valid.model_copy(deep=True)
+    invalid.tasks[-1].acceptance[0].path = "last.md"
+    model = ScriptedModel(invalid.model_dump_json(), valid.model_dump_json())
+    result = await Planner(model, profile("planner", role="planner")).plan(
+        "Write a report",
+        [profile()],
+        config(),
+        negotiate=False,
+    )
+    assert result == valid
+    assert "use declared workspace output 'outputs/last.md'" in model.calls[1][0][-1].content
+
+
+@pytest.mark.parametrize("path", ["inputs/brief.md", "auxiliary.md"])
+def test_workspace_checks_are_not_rewritten(path):
+    planned = linked_graph()
+    planned.tasks[-1].acceptance = [AcceptanceRule(type="file_exists", path=path)]
+    before = planned.model_dump_json()
+    PlanPreflight().validate(planned, config())
+    assert planned.model_dump_json() == before
+
+
+def test_declared_input_is_not_mistaken_for_nested_output():
+    planned = linked_graph()
+    planned.tasks[-1].outputs.append("outputs/inputs/brief.md")
+    planned.tasks[-1].acceptance.append(AcceptanceRule(type="file_exists", path="inputs/brief.md"))
+    PlanPreflight().validate(planned, config())

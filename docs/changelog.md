@@ -2,6 +2,61 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-21 — Worker Memory Injection and Trace Evidence
+
+- Added an optional `MemoryObserver` port and metadata-only `MemoryEvent` to A's
+  runtime and scheduler. Retrieve, model-client injection and reflection report
+  outcomes without recording private context or prompts. Existing Memory and
+  Observer adapters remain compatible; callback failures become warnings.
+- Added `scripts.worker_memory_demo` with a shared C memory store, two distinct
+  Chinese tasks, real file writes and acceptance, and checks correlating context
+  digests, trace events and reflected task IDs. The recall task has no file-read
+  access or marker in its instruction. Its goal passes only with the correct
+  marker. The disabled-recall control requires a missing-marker verdict, rather
+  than treating a model or tool crash as expected failure.
+- Four lifecycle regressions passed, including mocked HTTP verification of the
+  enabled and disabled requests, model failure attribution and observer failure
+  isolation. Both offline demo controls passed. No new live-provider result is
+  claimed; `--live` and default-profile P2 require exported DeepSeek credentials.
+- M2 on the merged C revision reproduced English 3/3 and Chinese 3/3. This is an
+  offline retrieval-only check. Section 5 and adoption of the optional trace port
+  in D's main adapter remain D-owned follow-ups.
+- Full verification: 303 tests passed, Ruff and Git whitespace checks passed,
+  T2/T3 controls passed, and the offline Dev fixture subset passed 4/4 goals and
+  8/8 nodes. The CLI regression now expects an invalid plan to exhaust three model
+  calls without running tools.
+
+## 2026-11-21 — T2/T3 Role A Integration Regressions
+
+- Verified the public `build_service()` factory with an explicitly advertised
+  pytest verifier: real trusted tests fail, send defects into retry, recover without
+  extra logical nodes, block dependents, and fail the goal independently of node success.
+- Added approval-boundary regressions for refusal, timeout, wrong request IDs and
+  multiple protected calls in a single model response. Retry budgets cannot bypass
+  denial; queues and sessions are released and every push needs its own decision.
+- Validation: 11 tests passed across the new A suites and D's T2/T3 suites. The
+  production decision/approval flow needed no change. B's runner, Git tools and
+  D's verdict/metric implementations remain owned by their respective authors.
+- Updated integration/architecture guidance for opt-in pytest support, failure
+  semantics and approval order. T2/T3 results cover trusted host fixtures and local
+  Git transport only.
+
+## 2026-11-21 — Planner Repair and P2 Task Instructions
+
+- Based on develop `68aee5f` (including C's #25 and D's #26).
+- Added positive/negative examples for workspace outputs, archived inputs, input
+  destinations and goal paths. Worker task titles must retain the original topic,
+  exact markers, format and read/copy requirements.
+- Raised bounded generation from two to three attempts and reserved all three
+  final-generation calls before requesting more specialist bids. Global call,
+  token and timeout budgets are unchanged.
+- Reject known node acceptance archive/workspace path mix-ups before execution,
+  without rewriting dataset criteria or blocking declared input checks.
+- Validation: 37 Planner/runtime/preflight/P2 tests passed, including third-attempt
+  repair through `run_goal()` with real file verification and handoff, exhausted
+  budgets, negotiation reservations and legal workspace paths. No live API call
+  was made; default-profile P2 still needs credentialed remeasurement.
+
 ## 2026-11-11 — Role A: Shared Model Client and Executable Plan Preflight
 
 Two integration defects were prioritized: the live smoke script duplicated the
