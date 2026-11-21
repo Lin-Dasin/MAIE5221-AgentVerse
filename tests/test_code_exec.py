@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from protocol.models import ExecutionContext, RunConfig, ToolCall, ToolResult
 from sandbox.executor import SandboxToolExecutor
+from tools.code_exec import DEFAULT_IMAGE
 from tools.registry import build
 
 
@@ -83,3 +89,112 @@ def test_code_exec_is_registered() -> None:
     registry = build()
     assert "code_exec" in registry
     assert registry["code_exec"].required == ("code",)
+
+
+def _docker_ready() -> bool:
+    """Skip container tests when the daemon or the image is missing (CI often has no daemon)."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        info = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if info.returncode != 0:
+            return False
+        image = os.environ.get("CODE_EXEC_IMAGE", "").strip() or DEFAULT_IMAGE
+        probe = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+docker_only = pytest.mark.skipif(
+    not _docker_ready(), reason="docker daemon or sandbox image unavailable"
+)
+
+
+@docker_only
+async def test_docker_backend_reports_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "docker")
+
+    result = await run(make_executor(tmp_path), "print('inside container')")
+
+    assert result.ok is True
+    assert result.data["exit_code"] == 0
+    assert "inside container" in result.data["stdout"]
+    assert result.data["backend"] == "docker"
+
+
+@docker_only
+async def test_docker_backend_cannot_see_host_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "docker")
+    host_repo = str(Path(__file__).resolve().parents[1]).replace("\\", "/")
+    code = f"import os\nprint('visible' if os.path.exists({host_repo!r}) else 'hidden')"
+
+    result = await run(make_executor(tmp_path), code)
+
+    assert result.ok is True
+    assert "hidden" in result.data["stdout"]
+
+
+@docker_only
+async def test_docker_backend_is_offline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "docker")
+    code = (
+        "import socket\n"
+        "s = socket.socket()\n"
+        "s.settimeout(2)\n"
+        "try:\n"
+        "    s.connect(('1.1.1.1', 80))\n"
+        "    print('reachable')\n"
+        "except OSError as exc:\n"
+        "    print('blocked:', type(exc).__name__)\n"
+    )
+
+    result = await run(make_executor(tmp_path), code)
+
+    assert result.ok is True
+    assert "reachable" not in result.data["stdout"]
+    assert "blocked" in result.data["stdout"]
+
+
+@docker_only
+async def test_docker_timeout_leaves_no_container_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "docker")
+
+    result = await run(make_executor(tmp_path), "import time\ntime.sleep(30)", timeout_sec=1)
+
+    assert result.ok is False
+    assert "exceeded" in (result.error or "")
+    listing = subprocess.run(
+        ["docker", "ps", "-a", "--filter", "name=agentverse-", "--format", "{{.Names}}"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert listing.stdout.strip() == ""
+
+
+async def test_unknown_backend_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "podman")
+
+    result = await run(make_executor(tmp_path), "print(1)")
+
+    assert result.ok is False
+    assert "must be 'subprocess' or 'docker'" in (result.error or "")
