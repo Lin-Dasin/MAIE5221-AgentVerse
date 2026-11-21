@@ -86,6 +86,12 @@ def _messages(argv: list[str]) -> int:
         default="message",
     )
     publish.add_argument("--text", required=True)
+    chat = actions.add_parser("chat", help="Ask a Worker for a private text reply")
+    chat.add_argument("conversation")
+    chat.add_argument("--sender", required=True)
+    chat.add_argument("--agent", required=True)
+    chat.add_argument("--text", required=True)
+    chat.add_argument("--profiles-dir", type=Path, default=Path("profiles"))
     history = actions.add_parser("history", help="Read a conversation as one of its members")
     history.add_argument("conversation")
     history.add_argument("--as-id", required=True)
@@ -98,6 +104,15 @@ def _messages(argv: list[str]) -> int:
     elif args.action == "publish":
         event = bus.publish(args.conversation, args.sender, args.kind, args.text)
         print(f"Event {event.sequence} recorded")
+    elif args.action == "chat":
+        from ui.private_chat import chat as request_reply
+
+        reply = asyncio.run(
+            request_reply(
+                bus, args.conversation, args.sender, args.agent, args.text, args.profiles_dir
+            )
+        )
+        print(f"{reply.sender}: {json.dumps(reply.text, ensure_ascii=False)}")
     else:
         for event in bus.history(args.conversation, args.as_id, after=args.after):
             print(
