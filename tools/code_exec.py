@@ -42,6 +42,7 @@ MAX_OUTPUT_CHARS = 8000
 BACKEND_ENV = "CODE_EXEC_BACKEND"
 IMAGE_ENV = "CODE_EXEC_IMAGE"
 DEFAULT_IMAGE = "agentverse-sandbox:latest"
+CONTAINER_PREFIX = "agentverse-"
 MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
 CONTAINER_EXIT_CODE = 125
@@ -82,7 +83,7 @@ def _command(code: str, workspace: Path, backend: str) -> tuple[list[str], str |
     if backend == "subprocess":
         return [sys.executable, "-I", "-c", code], None
 
-    name = f"agentverse-{uuid.uuid4().hex[:12]}"
+    name = f"{CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}"
     command = [
         "docker",
         "run",
