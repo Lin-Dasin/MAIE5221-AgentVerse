@@ -38,6 +38,7 @@ Everything else described here is covered by tests, including the container cont
 | `tools/git.py` | 214 | `git_commit`, `git_push`, nested-repository guard |
 | `tools/registry.py` | 74 | Binds definitions to handlers |
 | `sandbox/test_runner.py` | 182 | Verifier-side `run_pytest`, not an agent tool |
+| `sandbox/health.py` | 146 | Container probe and leftover cleanup at start-up |
 | `docker/Dockerfile` | 20 | Execution image for the container backend |
 
 Eight tools are registered in total: four file tools, one execution tool, one search
@@ -109,6 +110,24 @@ files with no bound, so one large file could exhaust the model context and fail 
 for reasons unrelated to the task. The cap is a character count, not a byte count, and
 the response carries `truncated: true` so a caller can tell a short file from a clipped
 one.
+
+### Startup hygiene
+
+A killed run leaves two kinds of debris: a `.pending` archive directory that never got
+renamed, and a container whose `docker run` client died before `--rm` could fire.
+`sandbox/health.py` handles both at start-up.
+
+- `container_available()` answers "can this machine run the docker backend" before the
+  first task fails with exit code 125, and names the build command when the image is
+  missing.
+- `cleanup_stale(root)` removes `.pending` directories **older than an hour** and any
+  container matching the `agentverse-` prefix. The age threshold is what keeps it safe:
+  a concurrent run that is mid-publish owns a fresh `.pending` directory, and deleting it
+  would corrupt that run.
+
+This is cleanup, not recovery. Nothing here resumes an interrupted task; the run that was
+killed stays dead, and its goal verdict stays absent. Recovery is a scheduler concern and
+remains out of scope, which is stated again under known limits.
 
 ## Tool contracts and error semantics
 
@@ -252,12 +271,14 @@ that is the verifier's job, not the sandbox's.
 
 At the time of writing:
 
-- `pytest -q` → **305 passed, 3 skipped**. The three skips are symlink cases that need
+- `pytest -q` → **313 passed, 3 skipped**. The three skips are symlink cases that need
   Windows Developer Mode; they run on CI.
 - Five container cases in `tests/test_code_exec.py` assert that generated code cannot see
   host paths, has no network, and that a timeout leaves no container behind. They skip
   automatically when `docker info` fails or the image is absent, so CI without a daemon
   stays green.
+- Eight cases in `tests/test_health.py` cover the cleanup threshold: a stale `.pending`
+  directory is removed, a fresh one is kept, and an accepted archive is never touched.
 - `ruff check .` → clean.
 - Live two-task run (`research` → `write`) against the real API: both tasks succeeded,
   goal verdict `PASS`, 13.4 s, 13 728 and 8 612 tokens.
@@ -279,7 +300,7 @@ on the container backend, because neither exists yet.
 | No read-only rootfs or seccomp profile | Generated code can still write outside `/workspace` inside the container | hardening after W13 |
 | Image not pinned by digest | A rebuilt `:latest` changes behaviour silently | pin a digest before the final report |
 | OOM kill surfaces as exit code 137 | The agent sees a process failure, not a resource message | translate 137 in a later iteration |
-| No crash recovery | A killed run leaves stale `.pending` archive directories | `sandbox/health.py`, not started |
+| No crash recovery | A killed run is not resumed; only its leftovers are cleaned | out of scope for this milestone |
 | No concurrency | Runs are serial; two runs against one root would collide | separate roots until workspace leasing exists |
 | `trace.jsonl` appends across runs | Counts must be filtered by `run_id` | one file per run |
 
