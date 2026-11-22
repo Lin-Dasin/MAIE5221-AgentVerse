@@ -10,7 +10,7 @@ from orchestrator.planner import Planner, PlanningError
 from orchestrator.scheduler import Scheduler
 from protocol.models import ChatMessage, FailureCode, TaskStatus
 from runtime.agent import AgentRuntime
-from runtime.client import DeepSeekClient, ModelCallError
+from runtime.client import DeepSeekClient, ModelCallError, ModelOutputLimitError
 from tests.helpers import FixtureTools, StubVerifier, config, graph, profile, task
 from tests.test_runtime import write_tool
 
@@ -23,6 +23,39 @@ def client_for(handler, **kwargs):
         transport=httpx.MockTransport(handler),
         **kwargs,
     )
+
+
+async def test_truncated_tool_response_retains_usage_without_parsing_partial_arguments():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "partial",
+                                    "function": {"name": "file_write", "arguments": '{"path":'},
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "usage": {"total_tokens": 4321},
+            },
+        )
+
+    client = client_for(handler)
+    try:
+        with pytest.raises(ModelOutputLimitError) as error:
+            await client.complete(
+                [ChatMessage(role="user", content="Write a file.")], [], max_tokens=10
+            )
+        assert error.value.tokens == 4321
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.parametrize("thinking", ["disabled", "enabled"])
