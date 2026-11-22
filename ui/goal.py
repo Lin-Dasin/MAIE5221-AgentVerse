@@ -1,8 +1,9 @@
-"""Assemble the CLI's DeepSeek file workflow with the shared orchestrator."""
+"""Assemble the CLI's DeepSeek workflows with the shared orchestrator."""
 
 import hashlib
 import json
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 from bus.trace import TRACE_FILENAME, JsonlTrace, TracingToolExecutor
@@ -31,15 +32,25 @@ class ConsoleTrace(JsonlTrace):
         print(f"{task.task_id} ({task.assignee}) -> {result.status.value}", flush=True)
 
 
-def _build_file_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+def _build_tools(root: Path, names: tuple[str, ...]) -> tuple[ToolExecutor, list[ToolDefinition]]:
     try:
         from sandbox.executor import SandboxToolExecutor
         from tools.registry import build
     except ModuleNotFoundError as error:
-        raise RuntimeError("The run command requires Role B's registered file tools") from error
+        raise RuntimeError("The run command requires Role B's tool registry") from error
     registry = build()
-    executor = SandboxToolExecutor(root, {name: registry[name] for name in FILE_TOOLS})
+    executor = SandboxToolExecutor(root, {name: registry[name] for name in names})
     return executor, executor.tool_definitions()
+
+
+def _build_file_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+    return _build_tools(root, FILE_TOOLS)
+
+
+def _build_goal_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+    if os.environ.get("SEARCH_API_KEY", "").strip():
+        return _build_tools(root, (*FILE_TOOLS, "web_search"))
+    return _build_file_tools(root)
 
 
 async def run_goal(
@@ -49,27 +60,37 @@ async def run_goal(
     rules: list[AcceptanceRule] | None = None,
     profiles_dir: Path | None = None,
     client_factory: Callable[[], DeepSeekClient] = DeepSeekClient.from_environment,
-    tool_factory: ToolFactory = _build_file_tools,
+    tool_factory: ToolFactory = _build_goal_tools,
+    run_id: str | None = None,
+    worker_ids: Collection[str] | None = None,
+    trace_factory: Callable[[Path], ConsoleTrace] = ConsoleTrace,
 ) -> tuple[Path, CaseReport]:
     if not goal.strip():
         raise ValueError("goal must contain text")
     config = RunConfig(memory_enabled=False, write_memory=False)
+    if run_id is not None:
+        config.run_id = run_id
     root = work_dir.resolve() / config.run_id
     executor, definitions = tool_factory(root)
     names = {definition.name for definition in definitions}
     profiles = {
         agent_id: profile
         for agent_id, profile in load_profiles(profiles_dir or Path("profiles")).items()
-        if profile.role == "planner" or (profile.role == "worker" and set(profile.tools) <= names)
+        if profile.role == "planner"
+        or (
+            profile.role == "worker"
+            and set(profile.tools) <= names
+            and (worker_ids is None or agent_id in worker_ids)
+        )
     }
     workers = sorted(agent_id for agent_id, profile in profiles.items() if profile.role == "worker")
     if not workers or "planner" not in profiles:
-        raise ValueError("Provide a planner and a worker profile compatible with the file tools")
+        raise ValueError("Provide a planner and a worker profile compatible with the enabled tools")
 
     client = client_factory()
     try:
         root.mkdir(parents=True, exist_ok=False)
-        trace = ConsoleTrace(root / TRACE_FILENAME)
+        trace = trace_factory(root / TRACE_FILENAME)
         service = build_service(
             root=root,
             model=client,
