@@ -3,7 +3,7 @@
 import hashlib
 import json
 import os
-from collections.abc import Callable, Collection
+from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 
 from bus.trace import TRACE_FILENAME, JsonlTrace, TracingToolExecutor
@@ -12,7 +12,15 @@ from harness.reporting import write_report
 from harness.verdict import FileVerifier
 from orchestrator.approvals import InteractiveApprover
 from orchestrator.bootstrap import build_service
-from protocol.models import AcceptanceRule, RunConfig, Task, TaskResult, ToolDefinition
+from protocol.models import (
+    AcceptanceRule,
+    HITLDecision,
+    HITLRequest,
+    RunConfig,
+    Task,
+    TaskResult,
+    ToolDefinition,
+)
 from protocol.ports import ToolExecutor
 from runtime.client import DeepSeekClient
 from runtime.profiles import load_profiles
@@ -64,12 +72,16 @@ async def run_goal(
     run_id: str | None = None,
     worker_ids: Collection[str] | None = None,
     trace_factory: Callable[[Path], ConsoleTrace] = ConsoleTrace,
+    ask: Callable[[HITLRequest], Awaitable[HITLDecision]] | None = None,
+    approval_timeout_sec: float | None = None,
 ) -> tuple[Path, CaseReport]:
     if not goal.strip():
         raise ValueError("goal must contain text")
     config = RunConfig(memory_enabled=False, write_memory=False)
     if run_id is not None:
         config.run_id = run_id
+    if approval_timeout_sec is not None:
+        config.approval_timeout_sec = approval_timeout_sec
     root = work_dir.resolve() / config.run_id
     executor, definitions = tool_factory(root)
     names = {definition.name for definition in definitions}
@@ -98,7 +110,10 @@ async def run_goal(
             tool_definitions=definitions,
             executor=TracingToolExecutor(executor, trace),
             verifier=FileVerifier(),
-            approver=InteractiveApprover(TerminalClarification()),
+            approver=InteractiveApprover(
+                ask if ask is not None else TerminalClarification(),
+                timeout_sec=config.approval_timeout_sec,
+            ),
             observer=trace,
         )
         print(f"Available workers: {', '.join(workers)}", flush=True)

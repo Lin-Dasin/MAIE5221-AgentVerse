@@ -110,7 +110,15 @@ def _messages(argv: list[str]) -> int:
     group_run.add_argument("--sender", required=True)
     group_run.add_argument("--notifier", default="orchestrator", help="Group member posting events")
     group_run.add_argument("--goal", required=True)
+    group_run.add_argument(
+        "--clarification-timeout", type=float, default=60, help="Seconds to wait for a group reply"
+    )
     _add_goal_options(group_run, default_work_dir=Path("results/group-goals"))
+    reply = actions.add_parser("reply", help="Answer a pending group clarification")
+    reply.add_argument("conversation")
+    reply.add_argument("--sender", required=True)
+    reply.add_argument("--request-id", required=True)
+    reply.add_argument("--text", required=True)
     history = actions.add_parser("history", help="Read a conversation as one of its members")
     history.add_argument("conversation")
     history.add_argument("--as-id", required=True)
@@ -146,9 +154,15 @@ def _messages(argv: list[str]) -> int:
                 args.work_dir,
                 rules=rules,
                 profiles_dir=args.profiles_dir,
+                clarification_timeout_sec=args.clarification_timeout,
             )
         )
         return _display_goal_report(evaluation_path, report)
+    elif args.action == "reply":
+        event = bus.reply_to_clarification(
+            args.conversation, args.sender, args.request_id, args.text
+        )
+        print(f"Clarification answer recorded as event {event.sequence}")
     else:
         for event in bus.history(args.conversation, args.as_id, after=args.after):
             print(
