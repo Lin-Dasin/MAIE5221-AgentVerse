@@ -70,6 +70,13 @@ Before real calls, D's application must load a local `.env` or read exported `LL
 
 ### Shared Model Client and Live Smoke Test
 
+The DeepSeek client does not inherit proxy or CA configuration from the host
+environment. The budget uses valid provider usage when available. If a successful
+HTTP response lacks valid usage, the client logs a metadata-only warning and
+conservatively charges the serialized prompt size plus the full response
+allowance. Estimated charges are not billing data. Responses truncated by the
+provider still count toward the Planner or Worker budget.
+
 `DeepSeekClient(..., thinking="disabled")` is the default. The environment factory
 reads `LLM_THINKING=disabled|enabled`; any other value fails before a request.
 Every request sends the chosen mode explicitly. `ChatMessage` and `ModelResponse`
