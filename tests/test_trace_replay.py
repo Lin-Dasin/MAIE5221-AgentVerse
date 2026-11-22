@@ -70,6 +70,16 @@ def test_read_trace_rejects_out_of_order_or_mixed_run(tmp_path, changes, message
     assert str(caught.value).startswith(f"{path}:3:")
 
 
+def test_selected_run_sequence_cannot_restart_across_interleaved_events(tmp_path):
+    path = tmp_path / "shared.jsonl"
+    rows = [event(sequence=2), event(run_id="other"), event(sequence=1)]
+    path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+    with pytest.raises(TraceReadError, match="strictly increasing") as caught:
+        read_trace(path, run_id="run-1")
+    assert str(caught.value).startswith(f"{path}:3:")
+    assert len(read_trace(path, run_id="other")) == 1
+
+
 @pytest.mark.parametrize(
     ("bad_line", "message"),
     [

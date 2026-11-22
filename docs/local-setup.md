@@ -160,3 +160,23 @@ python -m scripts.live_smoke --goal \
 The script verifies archive-relative `notes.md`, while Workers write
 `outputs/notes.md`. See [the integration guide](usage-and-integration.md) for the
 search variant, supported acceptance rules and the limits of this smoke check.
+
+Use a fresh `--root` for a smoke trace you plan to share. If several smoke
+runs already share a trace file, supply the desired run ID from its evaluation
+record to replay just that run.
+
+```bash
+python -m ui.cli replay results/live-file-smoke/trace.jsonl --run-id RUN_ID
+```
+
+Use the Worker memory demo to show retrieval and reflection across two related
+tasks. The mock mode can be used without provider credentials.
+
+```bash
+python -m scripts.worker_memory_demo --mock
+```
+
+The [integration guide](usage-and-integration.md#worker-memory-lifecycle-check)
+describes the live and recall-disabled modes. See the
+[live evaluation baselines](evidence/role-d-live-baselines.md) for the shareable
+records and reproduction commands.

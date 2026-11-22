@@ -117,3 +117,23 @@ def test_corrupt_trace_returns_error_without_showing_invalid_payload(tmp_path, c
     assert not output.out
     assert "trace.jsonl:1:" in output.err
     assert "private-data" not in output.err
+
+
+def test_select_one_interleaved_run_and_leave_shared_file_intact(tmp_path, capsys):
+    path = tmp_path / "shared.jsonl"
+    original = write_trace(
+        path,
+        [
+            (1, "plan_ready", {}),
+            (1, "plan_ready", {"run_id": "other", "final_task_id": "other-task"}),
+            (2, "run_finished", {"status": "success"}),
+        ],
+    )
+    assert main([str(path), "--run-id", "replay-demo"]) == 0
+    output = capsys.readouterr()
+    assert output.out.startswith("Run replay-demo | 2 events")
+    assert "other-task" not in output.out and not output.err
+    assert main([str(path), "--run-id", "absent"]) == 2
+    missing = capsys.readouterr()
+    assert not missing.out and "run ID 'absent' not found" in missing.err
+    assert path.read_bytes() == original

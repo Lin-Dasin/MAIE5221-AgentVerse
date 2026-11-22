@@ -1,4 +1,4 @@
-"""Run a goal for a group and publish its handoffs and result to the conversation."""
+"""Run a group goal and publish collaboration metadata to the conversation."""
 
 import asyncio
 import json
@@ -25,19 +25,49 @@ class GroupTrace(ConsoleTrace):
         self.notifier = notifier
         self.assignee_by_task: dict[str, str] = {}
 
+    def _publish(self, kind: str, event: str, run_id: str, **fields: object) -> None:
+        try:
+            self.bus.publish(
+                self.conversation, self.notifier, kind, _event(event, run_id, **fields)
+            )
+        except (MessageBusError, OSError) as error:
+            self.warnings.append(f"Group {kind} notification failed: {type(error).__name__}")
+
     async def plan_ready(self, run_id: str, graph: TaskGraph) -> None:
         await super().plan_ready(run_id, graph)
         self.assignee_by_task.update({task.task_id: task.assignee for task in graph.tasks})
+        self._publish(
+            "assignment",
+            "tasks_assigned",
+            run_id,
+            final_task_id=graph.final_task_id,
+            tasks=[
+                {"task_id": task.task_id, "agent_id": task.assignee, "depends_on": task.depends_on}
+                for task in graph.tasks
+            ],
+        )
 
     async def tasks_delegated(self, run_id: str, parent: Task, children: list[Task]) -> None:
         await super().tasks_delegated(run_id, parent, children)
         self.assignee_by_task.update({task.task_id: task.assignee for task in children})
+        if children:
+            self._publish(
+                "delegation",
+                "tasks_delegated",
+                run_id,
+                task_id=parent.task_id,
+                agent_id=parent.assignee,
+                children=[
+                    {"task_id": task.task_id, "agent_id": task.assignee} for task in children
+                ],
+            )
 
     async def artifacts_handed_off(self, run_id: str, task_id: str, inputs: list[InputRef]) -> None:
         await super().artifacts_handed_off(run_id, task_id, inputs)
         if not inputs:
             return
-        event = _event(
+        self._publish(
+            "handoff",
             "artifacts_handed_off",
             run_id,
             task_id=task_id,
@@ -47,10 +77,6 @@ class GroupTrace(ConsoleTrace):
                 for item in inputs
             ],
         )
-        try:
-            self.bus.publish(self.conversation, self.notifier, "handoff", event)
-        except (MessageBusError, OSError) as error:
-            self.warnings.append(f"Group handoff notification failed: {type(error).__name__}")
 
     async def hitl_decided(self, run_id: str, request: HITLRequest, decision: HITLDecision) -> None:
         await super().hitl_decided(run_id, request, decision)
@@ -116,6 +142,7 @@ async def run_group_goal(
         bus.publish(conversation, notifier, "message", _event("run_failed", run_id))
         raise
 
+    failure_code = report.raw_result.failure_code
     bus.publish(
         conversation,
         notifier,
@@ -129,8 +156,8 @@ async def run_group_goal(
             trace=str(path.parent / report.trace_path) if report.trace_path else None,
             subtasks_passed=report.subtasks_passed,
             subtasks_total=report.subtasks_total,
-            failure_reason=report.failure_reason,
-            warnings=report.warnings,
+            failure_code=failure_code.value if failure_code else None,
+            warning_count=len(report.warnings),
         ),
     )
     return path, report

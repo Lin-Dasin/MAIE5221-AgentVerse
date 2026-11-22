@@ -80,10 +80,13 @@ def describe_event(event: TraceEvent) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("trace", type=Path, help="Path to a single run's JSONL trace")
+    parser.add_argument(
+        "trace", type=Path, help="Path to a single run's JSONL trace or a shared trace"
+    )
+    parser.add_argument("--run-id", help="Select one run from a shared trace file")
     args = parser.parse_args(argv)
     try:
-        events = read_trace(args.trace)
+        events = read_trace(args.trace, run_id=args.run_id)
     except TraceReadError as error:
         print(f"Could not replay trace: {error}", file=sys.stderr)
         return 2

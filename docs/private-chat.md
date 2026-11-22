@@ -43,6 +43,13 @@ Scheduler. Create a group with the requesting user, a member to post run
 notifications (default `orchestrator`), and the eligible Worker IDs. The CLI
 limits the file-tool Workers to members of that group.
 
+The group history shows `assignment` events from the accepted plan and
+`delegation` events when the scheduler accepts a child task. Assignments list
+task and Worker IDs and their dependencies. Delegations link the parent task
+and Worker to the child tasks and their Workers. Handoffs identify the accepted
+inputs using paths. Run outcomes in group history include a failure code and a
+warning count. The evaluation report contains detailed diagnostics.
+
 This example uses the P2 profiles and fixed acceptance rule file:
 
 ```powershell
