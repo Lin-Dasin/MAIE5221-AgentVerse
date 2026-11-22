@@ -6,14 +6,14 @@ The offline suite exercises expected successes and failures. A separate live
 file pilot measures three fixed task graphs with DeepSeek. An offline terminal
 demo exercises human clarification through A's agent loop. The unified CLI
 accepts file-workflow goals, runs the offline demos, reads evaluation summaries,
-replays JSONL traces and reads SQLite conversation history. Agent conversation
-routing still requires the A/D integration contract.
+replays JSONL traces and stores SQLite conversation history. Users can direct
+private and group messages to a Worker and launch a goal from a group.
 
 ## Current progress and execution
 
 | File | Responsibility |
 |---|---|
-| `harness/verdict.py` | File and text acceptance |
+| `harness/verdict.py` | File and text acceptance, plus opt-in pytest acceptance |
 | `harness/cases.py` | Strict JSON/Pydantic suite loading |
 | `harness/offline.py` | Scripted Worker connected to A's real scheduler |
 | `harness/runner.py` | Serial runs with separate case directories and IDs |
@@ -114,7 +114,7 @@ result = await FileVerifier().check(
 |---|---|
 | `file_exists` | Pass only for an existing regular file; directories do not count |
 | `text_contains` | Read strict UTF-8 and check a case-sensitive literal substring |
-| `pytest_passes` | Return an explicit `unsupported_rule` defect until B's isolated executor is connected; never run generated tests on the host |
+| `pytest_passes` | The T2 verifier explicitly enables B's host-subprocess runner for trusted fixtures. A check passes only when the runner reports `passed=true` and integer exit code 0. |
 
 The verifier evaluates every rule and returns `checks_passed`, `checks_total`,
 `passed` and an ordered `defects` list. Missing files, invalid encoding and file
@@ -148,7 +148,7 @@ Role A PR #8 supplies the shared protocol, scheduler and test helpers. `Role_D`
 incorporates these through the merge of `develop` at `b01c5379`. The full A+D
 suite and the offline smoke command ran from the same repository checkout.
 
-Latest validation on 2026-11-05, Windows with Python 3.11.5:
+The November 5 baseline used Windows and Python 3.11.5.
 
 | Check | Observed result |
 |---|---|
@@ -208,7 +208,7 @@ For a new live run, set `LLM_MODEL=deepseek-flash` in the local environment
 file. This is the model ID listed in the current
 [DeepSeek model table](https://api-docs.deepseek.com/quick_start/pricing/).
 
-## Search evaluation pilot
+## T1 search evaluation
 
 On 2026-11-10, T1 ran against `main` commit `3a8567e`, which includes Role B's
 search adapter from PR #15. A fixed researcher-to-writer graph checked a Python
@@ -218,9 +218,35 @@ URL from each search query and the corresponding fact in the final Markdown.
 Both the scripted run and the DeepSeek run with simulated Tavily responses
 passed 1/1 goals, 2/2 nodes and 3/3 goal checks. The DeepSeek request and response
 both identified `deepseek-flash`. The run used an archive-relative handoff path
-in the fixed graph. The true Tavily run and the natural-language handoff in
-[issue #17](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/issues/17) remain open.
-The local evidence is under `results/baselines/search-t1-20261110/`.
+in the fixed graph. The local evidence is under
+`results/baselines/search-t1-20261110/`.
+
+On 2026-11-21, D reran the same two-source fixed graph with real DeepSeek and
+Tavily on a branch based on `develop` at `e085c0d`. The model request used
+`deepseek-chat`. Each query was limited to two results. Both requests returned
+HTTP 200 and each response contained the official URL assigned to that query.
+The accepted Markdown paired the [Python 3.13.0 release page](https://www.python.org/downloads/release/python-3130/)
+with `2024-10-07` and [PEP 703](https://peps.python.org/pep-0703/) with
+`--disable-gil`. The researcher archive, writer input and final report matched
+byte-for-byte.
+
+| Goals | Subtasks | Fixed acceptance checks | Fixed-graph time | Worker tokens |
+| ---: | ---: | ---: | ---: | ---: |
+| 1/1 | 2/2 | 3/3 | 17.91 s | 15,602 |
+
+The JSON, trace and verification summary are in the local run directory
+`results/baselines/t1-live-20261121/130414-103730/` (run
+`bbd23bc4a11646fda4145703ab745912`). Export `LLM_BASE_URL`, `LLM_MODEL`,
+`LLM_API_KEY` and `SEARCH_API_KEY` in the current shell to repeat the case. Use a
+fresh output directory for each run.
+
+```powershell
+python -m harness.t1 --output-dir results/t1-live-recheck
+```
+
+T1 starts from the fixed graph. [Issue #17](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/issues/17)
+tracks natural-language handoff planning. [PR #32](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/32)
+records a separate single-source CLI run that included planning.
 
 ## Terminal clarification pilot
 
@@ -242,6 +268,30 @@ The callback reads from a duplicate stdin stream so an unanswered question can
 time out without holding interpreter shutdown. Late replies are discarded. A
 session declines further questions until its pending terminal read completes.
 Fifteen focused tests cover terminal behavior and pause/resume integration.
+
+On November 21 a separate group-clarification pilot requested `deepseek-chat`.
+A second CLI process answered the pending request in the same group. The
+scheduler resumed the original task and the archived heading contained the
+chosen title. The goal and its one node passed in 12.69 s with 7,749 Worker
+tokens and one recorded HITL decision. This run exercised the prototype later
+committed as `394ea1a` on `Role_D_group_clarification`. Its evidence is under
+`results/baselines/group-clarification-live-20261121/7ee24104/`.
+
+### Worker chat
+
+In a private chat on November 21 the writer recalled the code from the user's
+preceding turn. In a group chat the researcher repeated the code the writer
+had just posted. The four-message histories are in
+`results/baselines/private-chat-20261121-6219ab51/history.txt` and
+`results/baselines/group-chat-20261121-9c07dd79/history.txt`. These probes
+cover directed Worker replies and conversation history. Group task execution
+is measured separately in P2. [Worker chat commands](../private-chat.md)
+
+An isolated November 21 merge preview combined group clarification
+(`1d61e67`) and CLI search (`cc9c46e`) on `develop` at `e085c0d`. One import
+conflict in `ui/goal.py` was resolved by retaining both imports. All 79 focused
+CLI, search and message-bus tests passed. [Group clarification PR](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/31) ·
+[CLI search PR](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/32)
 
 ## Replay a trace
 
@@ -303,8 +353,8 @@ change, so this run is evidence for that integration combination.
 
 The team plan calls for three cases in each of five categories, with first
 metrics due November 8. The five groups below are proposed for team review.
-The live file pilot covers F1–F3. T1 uses simulated Tavily responses. The four
-cases in the offline `dev` batch are a runnable subset of this plan.
+The live file pilot covers F1–F3. T1 now also has a real Tavily fixed-graph run.
+The four cases in the offline `dev` batch are a runnable subset of this plan.
 
 | ID | Category | Task and acceptance | Status or dependency |
 |---|---|---|---|
@@ -312,17 +362,17 @@ cases in the offline `dev` batch are a runnable subset of this plan.
 | F2 | File workflows | Read the handed-off `inputs/brief.md`. Verify the returned text matches the handoff and `final.md` contains the heading and source text. | Live fixed-graph pass |
 | F3 | File workflows | Read `inputs/metrics.md` and `inputs/checks.md`. Verify both reads and both source bodies in `summary.md`. | Live fixed-graph pass |
 | P1 | Planning and delegation | Submit a natural-language request through `run_goal` for a brief containing `W10` and `Owner D`. Verify the generated graph and accepted brief. | Local live single-node pilot passed. |
-| P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | Live: both handoffs verified in two runs. Default planner missed the goal; guided planner passed. |
+| P2 | Planning and delegation | Ask distinct Workers to produce and combine two labeled sources. Verify generated dependency links, both handoffs and both labels in the final file. | The November 21 default-planner group run passed and preserved both source lines. |
 | P3 | Planning and delegation | Have a parent Worker request a specialist. Verify a depth-1 child is inserted, accepted and counted once, then the parent resumes. | Offline integration with real file tools passed. |
-| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Offline terminal demo and automated stdin checks passed. |
+| H1 | Human approval | Clarify an ambiguous report label interactively. Verify the pause and response in the trace and the chosen label in the accepted file. | Terminal controls passed. A live group-clarification prototype resumed from a reply in a second CLI process. |
 | H2 | Human approval | Approve deletion of a disposable marker file. Verify the decision precedes the tool call and the marker is removed. | Automated terminal input and real file tool passed. |
 | H3 | Human approval | Deny the same deletion under unattended policy. Verify a bounded failed or blocked result, the preserved marker and absence of a delete call. | Expected denial control passed. |
-| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Scripted and DeepSeek fixture runs passed. Pending real Tavily run. |
-| T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the isolated executor exit code and test evidence. | B's PR #23 supplies a host-subprocess pytest runner. D can integrate trusted fixtures on the PR revision. Container isolation remains pending. |
-| T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | PR #23 supplies Git tools. A local commit can be tested on that revision. Remote acceptance requires an authorized sandbox repository and an approved push. |
+| T1 | Extended tools | Search for two fixed public references. Verify search calls and compare the archived URLs and facts with the case fixtures. | Real Tavily and DeepSeek fixed-graph run passed. Both official sources and 3/3 checks verified. |
+| T2 | Extended tools | Produce a small Python module and pass a fixed pytest suite. Verify the executor exit code and test evidence. | All four trusted host-subprocess controls passed. Generated-code execution still needs container validation. |
+| T3 | Extended tools | Publish a fixture file to an authorized test repository branch. Verify the resulting commit SHA and the file content. | Approval and denial controls passed against a local bare repository. Hosted GitHub acceptance requires a separate authorized run. |
 | M1 | Memory and evolution | Complete a task and verify a private reflection belongs to the Worker and refers to the observed outcome. | Local live English pilot verified persistence. |
-| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | Offline top-one recall: English 3/3, Chinese 0/3. |
-| M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | One live pair verified the toggle on a memory-dependent task. |
+| M2 | Memory and evolution | Run a related task and verify retrieval and injection of the relevant reflection. | English and Chinese top-one recall passed on PR #25. A separate live Chinese Worker run verified injection. |
+| M3 | Memory and evolution | Compare the same case with memory enabled and disabled against separate snapshots. Verify isolation and report goals, nodes, time and tokens for both runs. | The Chinese Worker on/off retest reached the model and produced an artifact in both conditions. |
 
 For H3, the denial can satisfy the control's expected behavior while the raw
 goal outcome remains failed or blocked. Report these two observations separately.
@@ -341,7 +391,9 @@ can use the commands below.
 | P2 offline | `python -m harness.p2 check RUN_DIR` | Recompute the verdict from a saved run directory, including both handoffs, successful reads and the accepted final text. Exit 0 means pass, 1 means failed checks, 2 means unusable input or command error. |
 | H1 | `python -m ui.cli h1` | Interactive clarification and accepted output. |
 | H2, H3 | `python -m ui.cli permission --scenario h2` or `h3` | Approval control and raw task outcome, reported separately. |
-| T1–T3 | See tool cases above | T1 has a fixture-backed search pilot. B can run the real Tavily check with their locally configured key. T2/T3 integration can target PR #23 before merge. |
+| T1 | `python -m harness.t1 --output-dir results/t1-live-recheck` | Runs the two fixed source queries with Tavily and checks both URL–fact pairs in the archived report. |
+| T2 | `python -m harness.t2 --work-dir results/t2` | Trusted host pytest controls and raw goal/node verdicts. |
+| T3 | `python -m harness.t3 --work-dir results/t3` | Local branch, SHA and blob checks under both approval decisions. |
 | M1, M2, M3 | `python -m harness.memory_recall --output results/m2.json` for M2 | The current offline executable measures top-one recall. M1 reflection and M3 memory on/off are separate historical pilots. |
 
 On November 19 D checked B's proposed interfaces in a separate source snapshot
@@ -349,8 +401,22 @@ of [PR #23](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/23) at
 `9aa9bbc`. The eight pytest-runner tests passed on Windows. Eight of nine Git
 tests passed. In the remaining test, the local bare repository contained the
 pushed commit and expected file on `master`, while its default HEAD pointed at
-an empty `main`. T3 should inspect the ref returned by the tool, compare its
-commit SHA and read the file at that commit. This exercise used a local remote.
+an empty `main`. T3 subsequently checked the ref named by the tool directly.
+
+On November 20 the T2 and T3 checks on `daf5e01` exercised the scheduler and
+real tools. T2 accepted the correct implementation in both the workspace and
+the published archive (exit 0 twice). The same test rejected the incorrect
+implementation (exit 1). Empty collection (exit 5) and a two-second timeout
+(no exit code) also failed acceptance. All four outcomes matched expectations.
+The raw rates were 1/4 goals and 1/4 nodes. [T2 procedure](../t2-evaluation.md)
+
+In T3 the approved push placed commit `8461b4f` on `delivery` and the file at
+that commit matched the fixture bytes. The denied candidate `9db3a6f` was a
+direct child of the published commit. The trace contained no push call after
+denial and both the remote refs and the approved blob remained intact. Approval
+delivered 1/1 goal and 1/1 node. Denial delivered 0/1 of each as expected.
+The two local controls and their JSON reports are under
+`results/baselines/t2-t3-pr-20261120/`. [T3 procedure](../t3-local-evaluation.md)
 
 ### P2 live two-source handoff
 
@@ -376,6 +442,14 @@ and the accepted summary reproduced both independently written lines verbatim.
 The evidence is under `results/baselines/p2-live-20261119/`: each run contains
 `evaluation.json`, `trace.jsonl`, `file-reads.jsonl` and `p2-check.json`.
 
+On November 21, the group task entry point at `da4f2be` ran P2 with the
+default planner and requested `deepseek-chat`. The goal, all three nodes and
+both final acceptance checks passed in 23.36 s including planning, using
+15,295 Worker tokens. The group handoff matched the trace, the writer read
+twice before writing, and its final report reproduced both complete source
+lines. Group members saw the same history for the run. Evidence is in
+`results/baselines/group-p2-default-sync-20261121-4951b75e/verification.json`.
+
 ### M2 bilingual recall
 
 On November 19, 2026, the offline probe ran against the memory implementation
@@ -384,10 +458,15 @@ topics: invoice totals, backup integrity and shift schedules. For each topic,
 the probe wrote a successful reflection using `reflect`, queried a related task
 using `retrieve` and checked whether the single returned record contained the
 expected advice. All three English queries selected the intended reflection.
-All three Chinese queries returned empty text. The current tokenizer extracts
-ASCII letters, digits and underscores, so the Chinese titles supply no topic
-tokens. This probe measures retrieval only; prompt injection and goal completion
-require a separate runtime evaluation.
+All three Chinese queries returned empty text. The tokenizer at that revision
+extracted ASCII letters, digits and underscores, so those titles supplied no
+topic tokens.
+
+On November 20 D ran the same six queries with the same expected advice and
+one-record limit on two revisions. On `develop` at `7beea75`, English hit 3/3
+and Chinese hit 0/3. With C's Chinese bigram matching at `7327426`, both
+languages hit 3/3. Both JSON reports are under
+`results/baselines/m2-pr25-recheck-20261120/`. [Memory fix, PR #25](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/25)
 
 To reproduce the comparison from the repository root:
 
@@ -398,6 +477,36 @@ python -m harness.memory_recall --output results/m2-bilingual/evaluation.json
 The JSON contains each query, expected advice, returned text and hit flag, plus
 the hit rate per language. A completed run writes the report even when queries
 miss, so the same fixtures can measure changes to the retriever.
+
+### M2 injection and M3 Worker memory comparison
+
+On November 21, a fixed-graph Chinese invoice task on `da4f2be` tested whether
+a writer could reuse a marker from its own earlier reflection. Both conditions
+started from identical private-memory snapshots, disabled writes and requested
+`deepseek-chat` with thinking disabled. The marker was absent from the task
+description. The on-condition trace recorded retrieval followed by injection,
+and its memory-text hash matched the input captured at the model boundary.
+
+| Retrieval | Goal | Nodes | Fixed-graph seconds | Worker tokens | Archived result |
+|---|---:|---:|---:|---:|---|
+| On | 1/1 | 1/1 | 4.28 | 6,459 | Reproduced the marker |
+| Off | 0/1 | 1/1 | 2.36 | 4,012 | Reported the missing convention in the file and failed the goal-level marker check |
+
+An earlier off-condition run requested clarification and was blocked. For the
+retest, both groups received the same instruction to write a file even when the
+marker could not be recovered. Both stored snapshots retained their initial
+hashes. The comparison covers one task and measures Worker usage only. The
+paired evidence is in `results/baselines/worker-memory-ab-20261121/live-retest/2244c45dd5bd46f7a95616b16610fca0/comparison.json`.
+
+### Failure attribution for development runs
+
+| Case | What failed | Follow-up evidence |
+|---|---|---|
+| CLI search | The researcher exceeded its task token budget after two successful searches. The downstream task remained blocked. | A repeat used one search with one result and passed with the same budget and rules. [PR #32](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/32) |
+| P2 planning | The November 19 default plan used bare acceptance paths and omitted the requested source topics. The writer exhausted its response limit before publishing an accepted summary. | The guided run passed that day. The November 21 group run also passed with the default planner. |
+| T2 pytest | Wrong implementation, empty test collection and timeout produced three distinct failed checks. | Each was expected in its control, with the outcome and exit information preserved separately. |
+| T3 validation | The older Git probe inspected the bare repository's default `HEAD`, which pointed at another branch. | The local acceptance checks the branch named by the tool, then compares the commit and file content. |
+| M2 recall | Chinese titles produced no usable tokens in the older matcher. | The same Chinese queries all returned the intended record after C's bigram change. |
 
 For Mid and Final, freeze the released cases and their goal rules before
 running. Record the dataset version, source commit, model ID, mode, memory and
@@ -421,11 +530,10 @@ python -m harness.run --suite offline-smoke --mock
 
 ## Remaining integration decisions
 
-- B/D: integrate PR #23's verifier-side runner for trusted T2 fixtures. Coordinate
-  supported rules with A's planner preflight and retain container isolation as
-  a separate requirement for generated code.
+- B/D: run the fixed Docker calculation with B's backend and C's `coder`
+  profile. [Docker acceptance procedure](../docker-calculation-acceptance.md)
 - A/D: keep the structured rule vocabulary and the two acceptance roots aligned.
-- A/D: define reporting for scheduler initialization failures that return a graph
-  but no task records; this is a later Harness aggregation concern.
+- Harness reports graph nodes without returned task records in `unreported_task_ids`.
+  A run with zero returned nodes has an undefined subtask completion rate.
 - Environment: repeat validation in Ubuntu/WSL2 and complete the real sandbox
   integration separately.
