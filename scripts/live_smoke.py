@@ -128,8 +128,12 @@ async def _run_with_client(
         available, detail = container_available()
         print(f"code_exec   : docker ({detail})")
         if not available:
-            print(f"hint        : {detail}", file=sys.stderr)
-            return 2
+            # Advisory only: the control lives in code_exec, which refuses to fall back to
+            # the host. Aborting here would also block runs that never execute code.
+            print(
+                f"warning     : code execution will fail until this is fixed: {detail}",
+                file=sys.stderr,
+            )
     else:
         print("code_exec   : subprocess (no isolation; set CODE_EXEC_BACKEND=docker)")
 
