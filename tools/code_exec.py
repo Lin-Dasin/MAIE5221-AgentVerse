@@ -2,11 +2,13 @@
 
 Two backends exist and both are tested:
 
-- ``subprocess`` (default) — runs with the current interpreter inside the workspace.
-  Fast, no dependencies, no isolation beyond the working directory.
-- ``docker`` — runs one short-lived container per call with the workspace mounted at
-  ``/workspace``, no network, a memory cap and a CPU cap. Selected with
-  ``CODE_EXEC_BACKEND=docker``.
+- ``docker`` (default) — runs one short-lived container per call with the workspace
+  mounted at ``/workspace``, no network, memory, CPU and process caps, a read-only root
+  and dropped capabilities.
+- ``subprocess`` — runs with the current interpreter inside the workspace. Fast, no
+  dependencies, and no isolation beyond the working directory. Select it explicitly
+  with ``CODE_EXEC_BACKEND=subprocess``; it is the fallback for machines without a
+  Docker daemon, never a silent default.
 
 Result semantics are identical for both:
 
@@ -17,9 +19,10 @@ Result semantics are identical for both:
 - A timeout, a failure to start the interpreter, or a container that never ran is a
   real tool failure, so it raises `ToolFailure` and comes back as `ok=False`.
 
-What the docker backend adds: no host network, a memory cap, a CPU cap and a
-process tree that dies with the container. What it costs: roughly half a second of
-start-up per call, and a dependency on a running Docker daemon.
+Choosing ``subprocess`` trades every container control for start-up speed: generated code
+then shares the host network and filesystem namespace and can outlive a timeout. The
+difference matters enough that the backend is printed at run start-up rather than left
+implicit.
 """
 
 from __future__ import annotations

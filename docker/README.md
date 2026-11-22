@@ -22,9 +22,10 @@ export CODE_EXEC_BACKEND=docker
 export CODE_EXEC_IMAGE=agentverse-sandbox:latest   # optional, this is the default
 ```
 
-Unset `CODE_EXEC_BACKEND` (or set it to `subprocess`) to keep the host interpreter.
-The default is `subprocess`, so a machine without Docker still runs the test suite and
-the offline harness.
+`docker` is the default: leaving `CODE_EXEC_BACKEND` unset selects it. Setting
+`CODE_EXEC_BACKEND=subprocess` keeps the host interpreter, which is what CI images without
+a daemon need — the test suite sets it explicitly rather than relying on a silent
+fallback.
 
 ## Short-lived containers, not one per agent
 
