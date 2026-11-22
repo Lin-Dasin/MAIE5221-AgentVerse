@@ -15,15 +15,18 @@ this milestone; see `docs/report/section-3.md`.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from tools.code_exec import CONTAINER_PREFIX, DEFAULT_IMAGE, IMAGE_ENV
 
 STALE_AFTER_SEC = 3600.0
 PROBE_TIMEOUT_SEC = 20.0
+NAME_PATTERN = re.compile(rf"^{re.escape(CONTAINER_PREFIX)}[0-9a-f]{{6,}}$")
 
 
 def _image(image: str | None) -> str:
@@ -69,7 +72,7 @@ def container_available(image: str | None = None) -> tuple[bool, str]:
     return True, resolved
 
 
-def _orphan_containers() -> list[str]:
+def _containers_by_name() -> list[str]:
     listing = [
         "docker",
         "ps",
@@ -91,6 +94,33 @@ def _orphan_containers() -> list[str]:
     if listed.returncode != 0:
         return []
     return [name.strip() for name in listed.stdout.splitlines() if name.strip()]
+
+
+def _created_at(name: str) -> float | None:
+    """Creation time of a container, or None when it cannot be read."""
+    try:
+        inspected = subprocess.run(
+            ["docker", "inspect", "--format", "{{.Created}}", name],
+            capture_output=True,
+            text=True,
+            timeout=PROBE_TIMEOUT_SEC,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if inspected.returncode != 0:
+        return None
+    raw = inspected.stdout.strip()
+    if not raw:
+        return None
+    # Docker returns RFC 3339 with nanoseconds: 2026-11-22T07:04:05.123456789Z
+    if "." in raw:
+        head, _, tail = raw.partition(".")
+        suffix = tail[-1] if tail and tail[-1] in "Z+-" else "Z"
+        raw = f"{head}{suffix}"
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def cleanup_stale(
@@ -124,7 +154,16 @@ def cleanup_stale(
 
     removed_containers: list[str] = []
     if remove_containers:
-        for name in _orphan_containers():
+        for name in _containers_by_name():
+            # `docker ps --filter name=` is a substring match, so the shape is re-checked
+            # before anything is removed: only `<prefix><hex>` belongs to this project.
+            if NAME_PATTERN.fullmatch(name) is None:
+                continue
+            created = _created_at(name)
+            # A container started by another run on this machine must survive; only
+            # containers older than the threshold are treated as leftovers.
+            if created is None or moment - created < older_than_sec:
+                continue
             try:
                 subprocess.run(
                     ["docker", "rm", "-f", name],

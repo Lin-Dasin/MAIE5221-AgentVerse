@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -98,3 +99,33 @@ def test_cleanup_reports_paths_as_strings(tmp_path: Path) -> None:
 
     assert all(isinstance(item, str) for item in report["removed_dirs"])
     assert str(stale) in report["removed_dirs"]
+
+
+def test_container_cleanup_requires_exact_names_and_age(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sandbox.health as health_module
+
+    monkeypatch.setattr(
+        health_module,
+        "_containers_by_name",
+        lambda: ["agentverse-abcdef123456", "agentverse-decoy-other", "agentverse-111111111111"],
+    )
+    monkeypatch.setattr(
+        health_module,
+        "_created_at",
+        lambda name: 1_000.0 if name == "agentverse-abcdef123456" else 9_999.0,
+    )
+    removed: list[str] = []
+
+    def fake_run(command, **kwargs):
+        removed.append(command[-1])
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(health_module.subprocess, "run", fake_run)
+
+    report = health_module.cleanup_stale(tmp_path, older_than_sec=3600, now=10_000.0)
+
+    # only the old, exactly-named, project-owned container is removed
+    assert report["removed_containers"] == ["agentverse-abcdef123456"]
+    assert removed == ["agentverse-abcdef123456"]
