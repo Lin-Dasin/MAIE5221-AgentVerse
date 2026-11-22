@@ -103,7 +103,10 @@ async def test_goal_to_artifact_with_memory_and_approval(tmp_path):
     assert result.tasks[0].tokens == 15
     assert result.tasks[0].attempts == 1
     assert len(result.tasks[0].hitl_decisions) == 1
-    assert memory.reads == [("writer", "t1")] and len(memory.writes) == 1
+    assert [agent for agent, _ in memory.reads] == ["planner", "writer"]
+    assert [task.assignee for task, _ in memory.writes] == ["writer", "planner"]
+    assert memory.reads[0][1] == memory.writes[1][0].task_id
+    assert memory.reads[1] == ("writer", "t1")
     assert len(executor.calls) == 1
     assert (
         tmp_path / "artifacts/integration/t1/t1.md"
