@@ -181,11 +181,12 @@ The optional `build_service(supported_acceptance_types=...)` argument defaults t
 explicit declaration by the application about the supplied verifier, not a new
 evaluator. D now exposes `FileVerifier(pytest_runner=...)` and
 `verifier.supported_acceptance_types`; B supplies a host runner for trusted fixtures.
-Pass that set explicitly to `build_service()` for the configured verifier. Keep
-the file-only default for ordinary runs; generated code still needs container
-isolation. Direct Planner/Scheduler construction can pass a `PlanPreflight`;
-only configured `worker_ids` enable its registry check. Production callers should
-use `build_service()` to keep both stages consistent.
+Pass that set explicitly to `build_service()` for the configured verifier.
+Ordinary CLI runs use file acceptance rules, including when search is enabled.
+Generated code still needs container isolation. When constructing a Planner or
+Scheduler directly, pass a `PlanPreflight` with `worker_ids` to enable its
+registry check. Production callers should use `build_service()` to keep both
+stages consistent.
 
 Preflight does not execute tools, test file existence/content, infer semantic
 capability matches, or replace D's acceptance decisions. Paths remain exact,

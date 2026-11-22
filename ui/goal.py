@@ -1,7 +1,8 @@
-"""Assemble the CLI's DeepSeek file workflow with the shared orchestrator."""
+"""Assemble the CLI's DeepSeek workflows with the shared orchestrator."""
 
 import hashlib
 import json
+import os
 from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 
@@ -39,15 +40,25 @@ class ConsoleTrace(JsonlTrace):
         print(f"{task.task_id} ({task.assignee}) -> {result.status.value}", flush=True)
 
 
-def _build_file_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+def _build_tools(root: Path, names: tuple[str, ...]) -> tuple[ToolExecutor, list[ToolDefinition]]:
     try:
         from sandbox.executor import SandboxToolExecutor
         from tools.registry import build
     except ModuleNotFoundError as error:
-        raise RuntimeError("The run command requires Role B's registered file tools") from error
+        raise RuntimeError("The run command requires Role B's tool registry") from error
     registry = build()
-    executor = SandboxToolExecutor(root, {name: registry[name] for name in FILE_TOOLS})
+    executor = SandboxToolExecutor(root, {name: registry[name] for name in names})
     return executor, executor.tool_definitions()
+
+
+def _build_file_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+    return _build_tools(root, FILE_TOOLS)
+
+
+def _build_goal_tools(root: Path) -> tuple[ToolExecutor, list[ToolDefinition]]:
+    if os.environ.get("SEARCH_API_KEY", "").strip():
+        return _build_tools(root, (*FILE_TOOLS, "web_search"))
+    return _build_file_tools(root)
 
 
 async def run_goal(
@@ -57,7 +68,7 @@ async def run_goal(
     rules: list[AcceptanceRule] | None = None,
     profiles_dir: Path | None = None,
     client_factory: Callable[[], DeepSeekClient] = DeepSeekClient.from_environment,
-    tool_factory: ToolFactory = _build_file_tools,
+    tool_factory: ToolFactory = _build_goal_tools,
     run_id: str | None = None,
     worker_ids: Collection[str] | None = None,
     trace_factory: Callable[[Path], ConsoleTrace] = ConsoleTrace,
@@ -86,7 +97,7 @@ async def run_goal(
     }
     workers = sorted(agent_id for agent_id, profile in profiles.items() if profile.role == "worker")
     if not workers or "planner" not in profiles:
-        raise ValueError("Provide a planner and a worker profile compatible with the file tools")
+        raise ValueError("Provide a planner and a worker profile compatible with the enabled tools")
 
     client = client_factory()
     try:
