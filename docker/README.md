@@ -49,16 +49,25 @@ the backend switch is already in place: change `_command()` in `tools/code_exec.
 | Control | Value |
 |---|---|
 | Network | `--network none` |
-| Memory | `--memory 512m` |
+| Memory | `--memory 512m`, `--memory-swap 512m` (no swap) |
 | CPU | `--cpus 1` |
+| Processes | `--pids-limit 256` (fork-bomb ceiling) |
+| Root filesystem | `--read-only`, with `/tmp` as a 64 MB tmpfs |
+| Capabilities | `--cap-drop ALL`, `--security-opt no-new-privileges` |
 | User | uid 10001, non-root |
 | Filesystem | only the agent workspace, mounted at `/workspace` |
 | Lifecycle | `--rm`, plus an explicit `docker rm -f` on timeout |
+| Labelling | `agentverse.sandbox` and `agentverse.sandbox.run=<run_id>` |
+
+The image also carries `pytest` and `pytest-asyncio`, so `sandbox/test_runner.py` can run
+acceptance tests inside the same container when `PYTEST_BACKEND=docker`.
 
 ## What it still does not enforce
 
-- No read-only root filesystem and no seccomp profile.
-- No per-run image pinning by digest, so a rebuilt `:latest` changes behaviour silently.
+- No seccomp profile beyond the dropped capabilities.
+- A locally built image has no registry digest, so `agentverse-sandbox:latest` cannot be
+  pinned the way a pulled image can. Tag it by image id before the final report
+  (`docker tag <id> agentverse-sandbox:<short-id>`) and point `CODE_EXEC_IMAGE` at that.
 - Generated code can still exhaust the 512 MB and be OOM-killed; that surfaces as exit
   code 137 rather than a friendly tool error.
 

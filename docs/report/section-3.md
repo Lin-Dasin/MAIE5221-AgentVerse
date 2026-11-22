@@ -12,19 +12,19 @@ open. The code it describes is `sandbox/` and `tools/`.
 | Path validation | Implemented | `sandbox/paths.py` |
 | Tool error mapping | Implemented | `sandbox/executor.py` |
 | File tools (read, write, list, delete) | Implemented | `tools/fs.py` |
-| Code execution | Implemented, subprocess backend | `tools/code_exec.py` |
+| Code execution | Implemented, container by default | `tools/code_exec.py` |
 | Web search | Implemented, Tavily adapter | `tools/web_search.py` |
 | Git tools (commit, push) | Implemented | `tools/git.py` |
-| Verifier-side pytest runner | Implemented, not yet wired | `sandbox/test_runner.py` |
-| Container isolation | Implemented, opt-in | `docker/`, `tools/code_exec.py` |
+| Verifier-side pytest runner | Implemented, host or container | `sandbox/test_runner.py` |
+| Container isolation | Implemented, selected by default | `docker/`, `tools/code_exec.py` |
 | Memory and CPU caps | Implemented in the docker backend | `tools/code_exec.py` |
 | Process-tree cleanup | Handled by the docker backend only | `tools/code_exec.py` |
 | Crash recovery and concurrency | **Not implemented** | planned W12 |
 
-Two statements in this chapter would be wrong to read as guarantees unless the docker
-backend is selected. With the default `subprocess` backend, code runs on the host and is
-not memory-capped; with `CODE_EXEC_BACKEND=docker` the container controls below apply.
-Everything else described here is covered by tests, including the container controls.
+Code execution runs in a container by default. `CODE_EXEC_BACKEND=subprocess` exists for
+CI images without a daemon and must be chosen explicitly; when it is chosen, none of the
+container controls below apply and generated code runs on the host. Everything else
+described here is covered by tests, including the container controls.
 
 ## Code map
 
@@ -90,6 +90,23 @@ would stage files in the project repository.
 The guard is tested by committing inside a workspace nested in an outer repository and
 then asserting that the outer `HEAD` and index are unchanged.
 
+### Git subprocesses are not trusted either
+
+A workspace is a git repository, which means generated code can write
+`.git/hooks/pre-commit`. If `git_commit` later ran that hook, the hook would execute with
+the tool process's privileges — including whatever is in the environment. Two controls
+close that path:
+
+- every git call passes `-c core.hooksPath=<os.devnull>`, so no hook directory can be
+  found;
+- the subprocess environment is rebuilt from an allowlist (`PATH`, `SYSTEMROOT`, `TEMP`,
+  `TMPDIR`, `HOME`, `LOCALE`). `LLM_API_KEY`, `SEARCH_API_KEY` and `GITHUB_TOKEN` are not
+  forwarded. The push token is injected into the remote URL by the tool itself, so git
+  never needs it in the environment.
+
+`GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=os.devnull` additionally stop user-level
+config from supplying hooks, aliases or a credential helper.
+
 ## Execution limits
 
 | Limit | Value | Enforced by | Failure reported as |
@@ -99,11 +116,15 @@ then asserting that the outer `HEAD` and index are unchanged.
 | Planning calls | 8 per run | planner loop | `planning budget exhausted` |
 | Task tokens | 60 000 (smoke config; default 16 000) | runtime counters | `budget_exceeded` |
 | Read payload | 200 000 characters | `tools/fs.py` | truncated, `truncated: true` |
+| Directory listing | 500 entries | `tools/fs.py` | truncated, `truncated: true` |
 | Command output | 8 000 characters | `tools/code_exec.py` | truncated in `stdout`/`stderr` |
 | Search extract | 1 200 characters per result | `tools/web_search.py` | truncated |
 | Memory (docker backend) | 512 MB | `docker run --memory` | process killed, exit code 137 |
 | CPUs (docker backend) | 1 | `docker run --cpus` | throttled |
 | Network (docker backend) | none | `docker run --network none` | `connect` raises `OSError` |
+| Processes (docker backend) | 256 | `docker run --pids-limit` | fork fails |
+| Root filesystem (docker backend) | read-only, `/tmp` tmpfs 64 MB | `docker run --read-only` | write fails |
+| Capabilities (docker backend) | all dropped, no new privileges | `--cap-drop ALL --security-opt` | — |
 
 The read cap was added after a live run showed the risk: `file_read` returned whole
 files with no bound, so one large file could exhaust the model context and fail a task
@@ -224,6 +245,7 @@ steer the agent.
 | 10 | Context flooding | A single read exhausts the model context | **Mitigated** — 200k character cap, flagged |
 | 11 | Binary or non-UTF-8 read | Decode error surfacing as a crash | **Mitigated** — converted to `invalid argument: file is not UTF-8 text` |
 | 12 | Unbounded network use by generated code | Data exfiltration or cost | **Mitigated with the docker backend** (`--network none`); open on subprocess |
+| 13 | Repository hooks written by generated code | Host command execution at commit time | **Blocked** — `core.hooksPath` disabled, minimal environment |
 
 Threat 6 remains open on both backends: a token the agent has seen can be written into an
 artifact, and nothing inspects outputs. Threats 9 and 12 are closed by the container
@@ -271,7 +293,7 @@ that is the verifier's job, not the sandbox's.
 
 At the time of writing:
 
-- `pytest -q` → **313 passed, 3 skipped**. The three skips are symlink cases that need
+- `pytest -q` → **324 passed, 3 skipped**. The three skips are symlink cases that need
   Windows Developer Mode; they run on CI.
 - Five container cases in `tests/test_code_exec.py` assert that generated code cannot see
   host paths, has no network, and that a timeout leaves no container behind. They skip
@@ -298,8 +320,9 @@ on the container backend, because neither exists yet.
 |---|---|---|
 | `subprocess` is still the default backend | A machine without Docker runs generated code on the host, with no isolation | keep the default for CI; select `docker` for evaluation and the demonstration |
 | No read-only rootfs or seccomp profile | Generated code can still write outside `/workspace` inside the container | hardening after W13 |
-| Image not pinned by digest | A rebuilt `:latest` changes behaviour silently | pin a digest before the final report |
 | OOM kill surfaces as exit code 137 | The agent sees a process failure, not a resource message | translate 137 in a later iteration |
+| Image not referenced by registry digest | A locally built `:latest` cannot be pinned the way a pulled image can | tag by image id before the final report |
+| `web_search` fails without a key | `overview.md` describes a keyless degraded fetch that this tool does not implement | either align the two documents or implement the fallback |
 | No crash recovery | A killed run is not resumed; only its leftovers are cleaned | out of scope for this milestone |
 | No concurrency | Runs are serial; two runs against one root would collide | separate roots until workspace leasing exists |
 | `trace.jsonl` appends across runs | Counts must be filtered by `run_id` | one file per run |
