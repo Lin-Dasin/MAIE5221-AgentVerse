@@ -334,6 +334,59 @@ class ModelResponse(Contract):
     reasoning_content: str | None = Field(default=None, repr=False)
 
 
+class DiscussionConfig(Contract):
+    """A group task and its limits, with an ordered list of worker personas."""
+
+    conversation_id: str = Field(min_length=1)
+    run_id: Identifier
+    task_id: Identifier
+    goal: str = Field(min_length=1)
+    speakers: list[Identifier] = Field(min_length=1)
+    moderator: Identifier
+    max_rounds: int = Field(default=4, ge=1)
+    max_output_tokens: int = Field(default=2048, ge=1)
+    max_task_tokens: int = Field(default=60000, ge=1)
+
+    @model_validator(mode="after")
+    def valid_discussion(self) -> Self:
+        if not self.conversation_id.strip() or not self.goal.strip():
+            raise ValueError("conversation_id and goal must contain text")
+        if len(set(self.speakers)) != len(self.speakers):
+            raise ValueError("discussion speakers must be unique")
+        if self.moderator not in self.speakers:
+            raise ValueError("moderator must be a discussion speaker")
+        return self
+
+
+class DiscussionTurn(Contract):
+    """One completed public utterance; tool details are for trace/export only."""
+
+    round: int = Field(ge=1)
+    speaker: Identifier
+    content: str = Field(min_length=1)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    tool_results: list[ToolResult] = Field(default_factory=list)
+    tokens: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def paired_tools(self) -> Self:
+        if len(self.tool_calls) != len(self.tool_results):
+            raise ValueError("discussion tool calls and results must pair by position")
+        return self
+
+
+DiscussionStopReason = Literal[
+    "max_rounds", "token_budget", "step_limit", "model_error", "invalid_model_output", "timeout"
+]
+
+
+class DiscussionResult(Contract):
+    conversation_id: str = Field(min_length=1)
+    run_id: Identifier
+    turns: list[DiscussionTurn] = Field(default_factory=list)
+    stopped_reason: DiscussionStopReason
+
+
 class RoleBid(Contract):
     task_ids: list[Identifier]
     rationale: str = Field(min_length=1)

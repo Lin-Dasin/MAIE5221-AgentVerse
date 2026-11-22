@@ -20,6 +20,7 @@ The implementation provides planning, dependency execution, approval pauses, sub
 | `orchestrator/bootstrap.py` | `build_service()` assembles explicitly supplied adapters into a service | Does not substitute for missing modules, start containers or load `.env` automatically |
 | `orchestrator/service.py` | `run_goal()` accepts natural-language goals; `run_graph()` accepts predefined task graphs | The former exercises autonomous planning; the latter helps diagnose deterministic integration first |
 | `runtime/agent.py` | Worker model/tool loop, memory retrieval, sub-delegation and human-response handling | Currently executes only `role="worker"`; not a general chat entry point for every role |
+| `orchestrator/discussion.py` and `runtime/discussion_speaker.py` | Bounded group discussion, rotating lead speaker, live turn callbacks and per-persona tool loops | Separate from the task graph; D supplies the chat adapters and C supplies the worker personas |
 | `runtime/client.py` | Official DeepSeek requests, configurable thinking, reasoning replay and bounded retries | Shared by smoke probes, Planner and Workers; HKGAI needs a separate adapter |
 | `runtime/profiles.py` | Loads and validates `profiles/*.yaml` | C supplies Planner, researcher and writer profiles |
 | `tests/` | Offline checks using simulated models and both real local adapters and explicit test doubles | These are regression checks, not real-model performance measurements |
@@ -212,6 +213,92 @@ Offline repair/handoff tests do not establish real-model P2 completion.
 Use a new `run_id` for every run. Identifier permits only letters, digits, underscores and hyphens; do not use a timestamp containing colons directly. The default `RunConfig()` generates a valid ID.
 
 Preserve memory during ordinary batch runs. When resetting it for A/B experiments, C/D should use separate copies and record their starting state. Shared-root execution is currently serial; parallel evaluation requires separate roots and corresponding container, memory and log mappings.
+
+### 3.4 Mid Test Discussion Engine (Role A)
+
+For acceptance and targeted bounded rework, use the opt-in
+[`DeliveryDiscussionRunner`](discussion-acceptance-loop.md) around this engine.
+It has separate plan/result contracts and does not change the plain discussion
+API below. The production CLI has not yet been switched to this entry point.
+
+Import `DiscussionConfig`, `DiscussionTurn`, and `DiscussionResult` from
+`protocol.models`; import the `HumanInput` and `DiscussionEngine` protocols
+from `protocol.ports`. Use `RoundRobinDiscussionEngine` from
+`orchestrator.discussion` directly, outside `build_service()`:
+
+```python
+engine = RoundRobinDiscussionEngine(tool_definitions=executor.tool_definitions())
+result = await engine.run(
+    config,
+    profiles=profiles,
+    history=public_history,
+    model=model,
+    executor=executor,
+    human=human_input,
+    emit=publish_turn,
+)
+```
+
+The assembly layer takes the tool definitions from B's executor (or from the
+underlying executor before wrapping it for traces). Each speaker must match a
+Worker profile, and its named tools must be registered. The engine exposes only
+the profile's tools that can run without approval. A model request for an
+unavailable or protected tool receives a tool error; a group message is never
+a permission decision.
+
+- Each round starts at the moderator's position in the ordered speaker list,
+  then visits every speaker once. The lead advances by one position per round.
+  Later speakers see the public text of earlier speakers in the same round.
+- Pass oldest-first public `ChatMessage` entries. The adapter can encode the
+  author in the message content (for example, `[researcher] ...`).
+  At each boundary before a next round, `HumanInput.next_message()` returns
+  one plain user message or `None` immediately; an available message enters
+  the next round. A stalled poll is reported as a timeout.
+- `emit(turn)` is awaited once per completed speaker contribution. Store
+  `speaker` and `content` in group chat; keep paired `tool_calls` and
+  `tool_results` in traces or exports only. An interrupted contribution is
+  absent from `turns`; wrap the executor if the trace must also capture tools
+  that ran before that interruption.
+- Defaults are four rounds, 2,048 output tokens per call and 60,000 total
+  discussion tokens. The engine reserves estimated prompt space before a call
+  and uses provider usage when available. With no usage, it charges the
+  reservation including the output cap. `turn.tokens` covers model calls for
+  that completed turn only; use provider instrumentation for actual costs of
+  failed calls or incomplete turns. Budget, step, model failure and timeout
+  stops return the completed turns so far.
+- Prompt context now uses bounded, labeled excerpts of assistant history and
+  tool results. Human messages and the current goal remain verbatim. Full
+  history, returned tool results and tool traces are not shortened in storage.
+  At the last step the engine requests final text without tools. Earlier budget
+  pressure ends research but preserves one bounded write/check opportunity if
+  the speaker has not already written a file. Non-final rounds receive a soft
+  40% share of the remaining task budget, retaining room for subsequent rounds.
+  These allowances do not guarantee all four rounds fit the task budget.
+- The default token counter is a heuristic with a safety margin, not an exact
+  DeepSeek tokenizer or a strict provider billing bound. An assembly layer can
+  pass a compatible `prompt_token_counter` to the constructor without changing
+  `run()` or the shared models. See [Discussion budget policy](discussion-budget-policy.md)
+  for the counter contract, clipping tradeoffs and local validation results.
+- General build/complete/review/deliver instructions and a write/check ledger
+  keep the current goal visible. Up to two web searches are dispatched per
+  contribution, including batched calls; the constructor's
+  `max_search_calls_per_turn` can change this limit. A text-only contribution
+  with write access gets at most one reminder to persist its deliverable.
+  A truncated model response is discarded, its known usage is charged, and
+  one smaller-response retry is permitted within the existing step/token caps.
+  [Delivery hardening and validation](discussion-delivery-validation.md)
+  describes the increased-budget test profile and A/B/C/D responsibilities.
+- A passes `run_id`, `task_id` and the speaker's `agent_id` to the executor
+  and leaves workspace lifecycle and G5 handoff to D. The discussion engine
+  does not run Planner, manage memory, or change the existing group goal CLI.
+
+Run `python -m pytest -q tests/test_discussion.py tests/test_discussion_context.py tests/test_discussion_delivery.py tests/test_client.py`
+from the repository root for
+the offline acceptance checks. They exercise the real local file adapter,
+scripted model and search responses, turn delivery, human input, and the
+execution limits. A local test driver has exercised the supplied S1/S2/S3
+scenarios and an S2 budget regression. These runs do not establish full task
+completion or replace integration with D's live group adapter.
 
 ## 4. B Integration: Tools and Sandboxes
 
@@ -473,3 +560,12 @@ Next, use separate scenarios for sub-delegation, human clarification, code testi
 - [ ] Unfinished course capabilities remain listed as gaps; a successful smoke workflow does not establish completion of the entire project.
 
 The team's internal target is to produce the first dev-set metrics by November 8. Official test release dates and permitted run counts follow course announcements.
+
+### Local managed delivery policy
+
+`DeliveryDiscussionRunner` automatically selects the managed budget/tool policy;
+existing runner assembly does not need a new flag. The frozen discussion
+contracts and standalone `RoundRobinDiscussionEngine.run()` remain unchanged.
+Persist the optional per-attempt `changed_requirements` and
+`unchanged_requirements` fields alongside verdicts; neither field is an
+acceptance verdict. See [managed execution policy](discussion-execution-policy.md).

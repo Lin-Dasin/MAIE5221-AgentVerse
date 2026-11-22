@@ -15,6 +15,14 @@ class ModelCallError(RuntimeError):
     pass
 
 
+class ModelOutputLimitError(ModelCallError):
+    """A discarded truncated response, with usage retained for caller accounting."""
+
+    def __init__(self, tokens: int = 0):
+        super().__init__("Model output exceeded the response limit")
+        self.tokens = tokens if type(tokens) is int and tokens >= 0 else 0
+
+
 class DeepSeekClient:
     def __init__(
         self,
@@ -129,7 +137,9 @@ class DeepSeekClient:
                         body = response.json()
                         choice = body["choices"][0]
                         if choice.get("finish_reason") == "length":
-                            raise ModelCallError("Model output exceeded the response limit")
+                            raise ModelOutputLimitError(
+                                body.get("usage", {}).get("total_tokens", 0)
+                            )
                         message = choice["message"]
                         return ModelResponse(
                             content=message.get("content") or "",
