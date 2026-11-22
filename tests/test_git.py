@@ -117,12 +117,21 @@ async def test_push_to_local_bare_repository(
     await call(executor, "file_write", path="outputs/report.md", text="pushed")
     await call(executor, "git_commit", message="ready to push")
 
+    workspace = executor.workspace("writer")
+    local_branch = git("symbolic-ref", "--short", "HEAD", cwd=workspace).strip()
+    local_sha = git("rev-parse", "--verify", "HEAD", cwd=workspace).strip()
+    # The bare repository's default branch need not be the pushed branch.
+    git("symbolic-ref", "HEAD", f"refs/heads/{local_branch}-unpublished", cwd=sandbox)
+
     result = await call(executor, "git_push")
 
     assert result.ok is True
     assert result.data["pushed"] is True
-    assert result.data["branch"] in {"main", "master"}
-    assert git("log", "--oneline", cwd=sandbox).strip()
+    branch = result.data["branch"]
+    assert branch == local_branch
+    remote_sha = git("rev-parse", "--verify", f"refs/heads/{branch}", cwd=sandbox).strip()
+    assert remote_sha == local_sha
+    assert git("show", f"{remote_sha}:outputs/report.md", cwd=sandbox) == "pushed"
 
 
 async def test_push_without_configuration_fails_clearly(
