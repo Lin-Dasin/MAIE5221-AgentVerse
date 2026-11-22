@@ -359,16 +359,21 @@ Discuss the following in the group before making unilateral changes:
 
 ### 5.5 Environment and Execution
 
-`.env` contains six variables:
+The project uses the environment variables listed in `.env.example`.
 
 | Variable | Purpose | When missing |
 | --- | --- | --- |
 | `LLM_BASE_URL` | DeepSeek or HKGAI endpoint | Fail at startup |
 | `LLM_API_KEY` | Model API key | Fail at startup |
 | `LLM_MODEL` | Model name | Fail at startup |
-| `SEARCH_API_KEY` | Search API, using the free tier of Tavily or Serper | Fall back to keyless retrieval and mark `search_degraded` in the trace |
+| `LLM_THINKING` | DeepSeek thinking mode | Defaults to `disabled` |
+| `SEARCH_API_KEY` | Tavily search API | CLI goal runs use file tools. A direct `web_search` call reports missing configuration. |
 | `GITHUB_TOKEN` | Push to the sandbox repository | Mark Git tools unavailable without blocking other tools |
 | `GITHUB_SANDBOX_REPO` | Dedicated sandbox repository URL | Same as above |
+
+The delivered search behavior should be recorded in evaluation settings. The
+v3.3 specification describes keyless retrieval with a `search_degraded` trace
+marker. The table reflects the current CLI and search tool behavior.
 
 Tool execution locations must be explicit so credentials are not exposed to agent-generated code:
 
