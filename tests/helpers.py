@@ -9,6 +9,7 @@ from protocol.models import (
     AgentProfile,
     CriticResult,
     ModelResponse,
+    RetrievedMemory,
     RunConfig,
     Task,
     TaskGraph,
@@ -101,7 +102,7 @@ class FakeMemory:
 
     async def retrieve(self, agent_id, task):
         self.reads.append((agent_id, task.task_id))
-        return "Synthetic remembered lesson"
+        return RetrievedMemory(text="Synthetic remembered lesson", memory_ids=["mem-fixture"])
 
     async def reflect(self, task, result):
         self.writes.append((task, result))

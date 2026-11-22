@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from memory.models import MemoryRecord
-from protocol.models import Task, TaskResult
+from protocol.models import RetrievedMemory, Task, TaskResult
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _ASCII_TOKEN = re.compile(r"[A-Za-z0-9_]+")
@@ -123,8 +123,8 @@ class JsonlMemory:
             lines.append(f"  Advice: {record.reusable_advice}")
         return "\n".join(lines)
 
-    async def retrieve(self, agent_id: str, task: Task) -> str:
-        """Return bounded prompt-ready memory for one agent, or an empty string."""
+    async def retrieve(self, agent_id: str, task: Task) -> RetrievedMemory:
+        """Return bounded prompt-ready memory and IDs in prompt order."""
         records = self._load(agent_id)
         ranked = sorted(
             ((self._score(task, record), record) for record in records),
@@ -132,15 +132,15 @@ class JsonlMemory:
             reverse=True,
         )
         selected = [record for score, record in ranked if score > 0][: self.max_records]
-        if not selected:
-            return ""
         text = "Relevant private memory:\n"
+        included: list[str] = []
         for record in selected:
             candidate = f"{text}{self._format(record)}\n"
             if len(candidate) > self.max_context_chars:
                 break
             text = candidate
-        return text.rstrip()
+            included.append(record.memory_id)
+        return RetrievedMemory(text=text.rstrip() if included else "", memory_ids=included)
 
     async def reflect(self, task: Task, result: TaskResult) -> None:
         """Persist a deterministic reflection from the terminal task result."""
