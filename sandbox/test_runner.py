@@ -17,11 +17,22 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from sandbox.paths import PathViolation, resolve_within
+from tools.code_exec import (
+    CONTAINER_LABEL,
+    CONTAINER_PREFIX,
+    CPU_LIMIT,
+    DEFAULT_IMAGE,
+    IMAGE_ENV,
+    MEMORY_LIMIT,
+    PIDS_LIMIT,
+)
 
 DEFAULT_TIMEOUT_SEC = 60.0
+BACKEND_ENV = "PYTEST_BACKEND"
 MAX_OUTPUT_CHARS = 8000
 PASSED_EXIT_CODE = 0
 NO_TESTS_EXIT_CODE = 5
@@ -90,11 +101,78 @@ def _result(
     }
 
 
+def _backend(backend: str | None) -> str:
+    value = backend or os.environ.get(BACKEND_ENV, "host")
+    value = value.strip().lower()
+    if value not in {"host", "docker"}:
+        raise ValueError(f"{BACKEND_ENV} must be 'host' or 'docker'")
+    return value
+
+
+def _docker_command(workspace: Path, target: str, container: str) -> list[str]:
+    image = os.environ.get(IMAGE_ENV, "").strip() or DEFAULT_IMAGE
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container,
+        "--label",
+        CONTAINER_LABEL,
+        "--network",
+        "none",
+        "--memory",
+        MEMORY_LIMIT,
+        "--memory-swap",
+        MEMORY_LIMIT,
+        "--cpus",
+        CPU_LIMIT,
+        "--pids-limit",
+        PIDS_LIMIT,
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,size=64m",
+        "-v",
+        f"{workspace.resolve().as_posix()}:/workspace",
+        "-w",
+        "/workspace",
+        image,
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "--no-header",
+        "-p",
+        "no:cacheprovider",
+        target,
+    ]
+
+
+def _remove_container(name: str) -> None:
+    """A killed `docker run` client can leave the container behind; --rm fires on exit only."""
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", name],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def run_pytest(
     workspace: Path,
     target: str = ".",
     *,
     timeout_sec: float = DEFAULT_TIMEOUT_SEC,
+    backend: str | None = None,
 ) -> dict[str, object]:
     """Run pytest against `target` inside `workspace`.
 
@@ -106,8 +184,26 @@ def run_pytest(
         "output": str, "duration_sec": float}``
 
     ``exit_code`` is ``None`` when the run timed out or pytest could not start.
+
+    ``backend`` selects where pytest runs. ``host`` keeps the previous behaviour;
+    ``docker`` runs the same command in the sandbox image, which is the only option that
+    isolates generated code. It defaults to ``PYTEST_BACKEND``, then to ``host`` so that a
+    machine without a daemon still runs the suite.
     """
     started = time.monotonic()
+
+    try:
+        mode = _backend(backend)
+    except ValueError as exc:
+        # `run_pytest` never raises: a misconfigured backend is a failed result.
+        return _result(
+            passed=False,
+            exit_code=None,
+            summary=str(exc),
+            output="",
+            started=started,
+        )
+
 
     try:
         resolved = resolve_within(workspace, target)
@@ -129,16 +225,21 @@ def run_pytest(
             started=started,
         )
 
-    command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "-q",
-        "--no-header",
-        "-p",
-        "no:cacheprovider",
-        str(resolved),
-    ]
+    container = f"{CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}" if mode == "docker" else None
+    if mode == "docker":
+        relative = resolved.relative_to(workspace.resolve()).as_posix() or "."
+        command = _docker_command(workspace, relative, container or "")
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            str(resolved),
+        ]
 
     try:
         proc = subprocess.run(
@@ -153,6 +254,8 @@ def run_pytest(
         )
     except subprocess.TimeoutExpired as exc:
         partial = _decode(exc.stdout) + _decode(exc.stderr)
+        if container is not None:
+            _remove_container(container)
         return _result(
             passed=False,
             exit_code=None,

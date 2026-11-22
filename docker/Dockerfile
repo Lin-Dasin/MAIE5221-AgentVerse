@@ -10,6 +10,10 @@ FROM python:3.12-slim
 # image reproducible; ownership does not matter on Windows bind mounts.
 RUN useradd --create-home --uid 10001 runner
 
+# pytest is part of the image so `sandbox/test_runner.py` can evaluate generated code
+# inside the container instead of on the host. Versions pinned to match the dev env.
+RUN pip install --no-cache-dir "pytest==9.2.0" "pytest-asyncio==1.4.1"
+
 WORKDIR /workspace
 USER runner
 
