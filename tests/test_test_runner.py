@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sandbox.test_runner import MAX_OUTPUT_CHARS, _decode, run_pytest
 
 
@@ -108,3 +110,46 @@ def test_decode_normalises_the_timeout_stream_types() -> None:
     assert _decode(b"warning on stderr") == "warning on stderr"
     assert _decode(None) == ""
     assert _decode("already text") == "already text"
+
+
+def _docker_ready() -> bool:
+    import os
+    import shutil
+    import subprocess
+
+    if shutil.which("docker") is None:
+        return False
+    try:
+        info = subprocess.run(
+            ["docker", "info", "--format", "{{.ServerVersion}}"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if info.returncode != 0:
+            return False
+        image = os.environ.get("CODE_EXEC_IMAGE", "").strip() or "agentverse-sandbox:latest"
+        probe = subprocess.run(
+            ["docker", "image", "inspect", image], capture_output=True, text=True, timeout=20
+        )
+        return probe.returncode == 0
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _docker_ready(), reason="docker daemon or sandbox image unavailable")
+def test_pytest_can_run_inside_the_container(tmp_path: Path) -> None:
+    write(tmp_path, "test_ok.py", "def test_adds():\n    assert 1 + 1 == 2\n")
+
+    result = run_pytest(tmp_path, "test_ok.py", backend="docker")
+
+    assert result["passed"] is True
+    assert result["exit_code"] == 0
+
+
+def test_unknown_pytest_backend_is_a_result_not_an_exception(tmp_path: Path) -> None:
+    result = run_pytest(tmp_path, "test_ok.py", backend="podman")
+
+    assert result["passed"] is False
+    assert result["exit_code"] is None
+    assert "must be 'host' or 'docker'" in str(result["summary"])

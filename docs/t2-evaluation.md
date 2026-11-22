@@ -20,6 +20,7 @@ The goal-level pytest check runs after the accepted node publishes its files.
 
 The T2 factory explicitly supplies the runner to D's verifier and advertises
 its supported rules to A's plan validation. Ordinary file verification keeps its
-file-only defaults. B's runner uses a host subprocess. The fixtures above exercise
-acceptance semantics; running model-generated Python requires the project's
-container isolation.
+file-only defaults. B's runner executes on the host by default and can run the same
+command inside the sandbox container (`backend="docker"`, or `PYTEST_BACKEND=docker`);
+the fixtures above exercise acceptance semantics, and model-generated Python should use
+the container backend.

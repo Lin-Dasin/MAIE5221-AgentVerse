@@ -12,18 +12,19 @@ open. The code it describes is `sandbox/` and `tools/`.
 | Path validation | Implemented | `sandbox/paths.py` |
 | Tool error mapping | Implemented | `sandbox/executor.py` |
 | File tools (read, write, list, delete) | Implemented | `tools/fs.py` |
-| Code execution | Implemented, subprocess backend | `tools/code_exec.py` |
+| Code execution | Implemented, container by default | `tools/code_exec.py` |
 | Web search | Implemented, Tavily adapter | `tools/web_search.py` |
 | Git tools (commit, push) | Implemented | `tools/git.py` |
-| Verifier-side pytest runner | Implemented, not yet wired | `sandbox/test_runner.py` |
-| Container isolation | **Not implemented** | planned, `docker/` |
-| Memory cap for generated code | **Not implemented** | see limits |
-| Process-tree cleanup | **Not implemented** | see limits |
+| Verifier-side pytest runner | Implemented, host or container | `sandbox/test_runner.py` |
+| Container isolation | Implemented, selected by default | `docker/`, `tools/code_exec.py` |
+| Memory and CPU caps | Implemented in the docker backend | `tools/code_exec.py` |
+| Process-tree cleanup | Handled by the docker backend only | `tools/code_exec.py` |
 | Crash recovery and concurrency | **Not implemented** | planned W12 |
 
-Two statements in this chapter would be wrong to read as guarantees: code runs in a
-subprocess on the host, not in a container, and generated code is not memory-capped.
-Everything else described here is covered by tests.
+Code execution runs in a container by default. `CODE_EXEC_BACKEND=subprocess` exists for
+CI images without a daemon and must be chosen explicitly; when it is chosen, none of the
+container controls below apply and generated code runs on the host. Everything else
+described here is covered by tests, including the container controls.
 
 ## Code map
 
@@ -32,10 +33,13 @@ Everything else described here is covered by tests.
 | `sandbox/paths.py` | 35 | `resolve_within()`, the single containment check |
 | `sandbox/executor.py` | 110 | `SandboxToolExecutor`: dispatch, error mapping, never raises |
 | `tools/fs.py` | ~145 | `file_read`, `file_write`, `file_list`, `file_delete` |
-| `tools/code_exec.py` | 114 | Python execution with a wall-clock limit |
+| `tools/code_exec.py` | 203 | Python execution, `subprocess` or container backend |
 | `tools/web_search.py` | 154 | Tavily search, provider isolated in one function |
 | `tools/git.py` | 214 | `git_commit`, `git_push`, nested-repository guard |
 | `tools/registry.py` | 74 | Binds definitions to handlers |
+| `sandbox/test_runner.py` | 182 | Verifier-side `run_pytest`, not an agent tool |
+| `sandbox/health.py` | 146 | Container probe and leftover cleanup at start-up |
+| `docker/Dockerfile` | 20 | Execution image for the container backend |
 
 Eight tools are registered in total: four file tools, one execution tool, one search
 tool and two git tools.
@@ -86,6 +90,23 @@ would stage files in the project repository.
 The guard is tested by committing inside a workspace nested in an outer repository and
 then asserting that the outer `HEAD` and index are unchanged.
 
+### Git subprocesses are not trusted either
+
+A workspace is a git repository, which means generated code can write
+`.git/hooks/pre-commit`. If `git_commit` later ran that hook, the hook would execute with
+the tool process's privileges — including whatever is in the environment. Two controls
+close that path:
+
+- every git call passes `-c core.hooksPath=<os.devnull>`, so no hook directory can be
+  found;
+- the subprocess environment is rebuilt from an allowlist (`PATH`, `SYSTEMROOT`, `TEMP`,
+  `TMPDIR`, `HOME`, `LOCALE`). `LLM_API_KEY`, `SEARCH_API_KEY` and `GITHUB_TOKEN` are not
+  forwarded. The push token is injected into the remote URL by the tool itself, so git
+  never needs it in the environment.
+
+`GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=os.devnull` additionally stop user-level
+config from supplying hooks, aliases or a credential helper.
+
 ## Execution limits
 
 | Limit | Value | Enforced by | Failure reported as |
@@ -95,14 +116,39 @@ then asserting that the outer `HEAD` and index are unchanged.
 | Planning calls | 8 per run | planner loop | `planning budget exhausted` |
 | Task tokens | 60 000 (smoke config; default 16 000) | runtime counters | `budget_exceeded` |
 | Read payload | 200 000 characters | `tools/fs.py` | truncated, `truncated: true` |
+| Directory listing | 500 entries | `tools/fs.py` | truncated, `truncated: true` |
 | Command output | 8 000 characters | `tools/code_exec.py` | truncated in `stdout`/`stderr` |
 | Search extract | 1 200 characters per result | `tools/web_search.py` | truncated |
+| Memory (docker backend) | 512 MB | `docker run --memory` | process killed, exit code 137 |
+| CPUs (docker backend) | 1 | `docker run --cpus` | throttled |
+| Network (docker backend) | none | `docker run --network none` | `connect` raises `OSError` |
+| Processes (docker backend) | 256 | `docker run --pids-limit` | fork fails |
+| Root filesystem (docker backend) | read-only, `/tmp` tmpfs 64 MB | `docker run --read-only` | write fails |
+| Capabilities (docker backend) | all dropped, no new privileges | `--cap-drop ALL --security-opt` | — |
 
 The read cap was added after a live run showed the risk: `file_read` returned whole
 files with no bound, so one large file could exhaust the model context and fail a task
 for reasons unrelated to the task. The cap is a character count, not a byte count, and
 the response carries `truncated: true` so a caller can tell a short file from a clipped
 one.
+
+### Startup hygiene
+
+A killed run leaves two kinds of debris: a `.pending` archive directory that never got
+renamed, and a container whose `docker run` client died before `--rm` could fire.
+`sandbox/health.py` handles both at start-up.
+
+- `container_available()` answers "can this machine run the docker backend" before the
+  first task fails with exit code 125, and names the build command when the image is
+  missing.
+- `cleanup_stale(root)` removes `.pending` directories **older than an hour** and any
+  container matching the `agentverse-` prefix. The age threshold is what keeps it safe:
+  a concurrent run that is mid-publish owns a fresh `.pending` directory, and deleting it
+  would corrupt that run.
+
+This is cleanup, not recovery. Nothing here resumes an interrupted task; the run that was
+killed stays dead, and its goal verdict stays absent. Recovery is a scheduler concern and
+remains out of scope, which is stated again under known limits.
 
 ## Tool contracts and error semantics
 
@@ -194,16 +240,18 @@ steer the agent.
 | 5 | Credential leakage through errors | Token in a trace or report | **Mitigated** — token scrubbed from git errors; trace records metadata only |
 | 6 | Credential leakage through artifacts | Token written into an output file | **Open** — the agent can write any string it has seen; nothing inspects outputs |
 | 7 | Prompt injection from search content | Agent executes an instruction from a web page | **Partly mitigated** — `file_delete` and `git_push` require approval; content is not filtered |
-| 8 | Resource exhaustion (loops, memory) | Host slowed or a task hangs | **Partly mitigated** — timeouts enforced, **memory is not capped** |
-| 9 | Orphaned child processes | Processes survive after a timeout | **Open** — `subprocess.run` kills the direct child only |
+| 8 | Resource exhaustion (loops, memory) | Host slowed or a task hangs | **Mitigated with the docker backend** — timeouts, 512 MB and 1 CPU; the subprocess backend has no memory cap |
+| 9 | Orphaned child processes | Processes survive after a timeout | **Mitigated with the docker backend** — the tree dies with the container; still open on subprocess |
 | 10 | Context flooding | A single read exhausts the model context | **Mitigated** — 200k character cap, flagged |
 | 11 | Binary or non-UTF-8 read | Decode error surfacing as a crash | **Mitigated** — converted to `invalid argument: file is not UTF-8 text` |
-| 12 | Unbounded network use by generated code | Data exfiltration or cost | **Open** — the subprocess has the host network |
+| 12 | Unbounded network use by generated code | Data exfiltration or cost | **Mitigated with the docker backend** (`--network none`); open on subprocess |
+| 13 | Repository hooks written by generated code | Host command execution at commit time | **Blocked** — `core.hooksPath` disabled, minimal environment |
 
-Threats 6, 9 and 12 are the honest ceiling of a host-subprocess sandbox. They are the
-reason the container backend is on the roadmap rather than optional: a container gives
-filesystem and network policy, a memory cap, and a process tree that dies with its
-parent.
+Threat 6 remains open on both backends: a token the agent has seen can be written into an
+artifact, and nothing inspects outputs. Threats 9 and 12 are closed by the container
+backend, because a container carries its own network namespace and its process tree dies
+with it — which is why the backend exists at all rather than being a refinement of the
+host sandbox.
 
 ### Why approval gates rather than content filtering
 
@@ -245,8 +293,14 @@ that is the verifier's job, not the sandbox's.
 
 At the time of writing:
 
-- `pytest -q` → **258 passed, 3 skipped**. The three skips are symlink cases that need
+- `pytest -q` → **324 passed, 3 skipped**. The three skips are symlink cases that need
   Windows Developer Mode; they run on CI.
+- Five container cases in `tests/test_code_exec.py` assert that generated code cannot see
+  host paths, has no network, and that a timeout leaves no container behind. They skip
+  automatically when `docker info` fails or the image is absent, so CI without a daemon
+  stays green.
+- Eight cases in `tests/test_health.py` cover the cleanup threshold: a stale `.pending`
+  directory is removed, a fresh one is kept, and an accepted archive is never touched.
 - `ruff check .` → clean.
 - Live two-task run (`research` → `write`) against the real API: both tasks succeeded,
   goal verdict `PASS`, 13.4 s, 13 728 and 8 612 tokens.
@@ -264,14 +318,16 @@ on the container backend, because neither exists yet.
 
 | Limit | Impact | Planned |
 |---|---|---|
-| No container | Generated code shares the host network and filesystem namespace | `docker/`, W12 |
-| No memory cap | A single allocation can exhaust host memory | container, or a job object on Windows |
-| No process-tree kill | Grandchildren survive a timeout | container |
-| No crash recovery | A killed container leaves stale artifacts | `sandbox/health.py`, W12 |
-| No concurrency | Runs are serial; two runs against one root would collide | W12, coordinated with A |
+| `subprocess` is still the default backend | A machine without Docker runs generated code on the host, with no isolation | keep the default for CI; select `docker` for evaluation and the demonstration |
+| No read-only rootfs or seccomp profile | Generated code can still write outside `/workspace` inside the container | hardening after W13 |
+| OOM kill surfaces as exit code 137 | The agent sees a process failure, not a resource message | translate 137 in a later iteration |
+| Image not referenced by registry digest | A locally built `:latest` cannot be pinned the way a pulled image can | tag by image id before the final report |
+| `web_search` fails without a key | `overview.md` describes a keyless degraded fetch that this tool does not implement | either align the two documents or implement the fallback |
+| No crash recovery | A killed run is not resumed; only its leftovers are cleaned | out of scope for this milestone |
+| No concurrency | Runs are serial; two runs against one root would collide | separate roots until workspace leasing exists |
 | `trace.jsonl` appends across runs | Counts must be filtered by `run_id` | one file per run |
 
-The first three are properties of the subprocess backend rather than defects in the
-tool code, which is why the tool contracts were written to be backend-agnostic: swapping
-`subprocess` for a container call changes `tools/code_exec.py` only, and the eight tool
-definitions, the error semantics and the tests stay as they are.
+The first four rows are properties of the chosen backend rather than defects in the tool
+code, which is why the tool contracts were written to be backend-agnostic. That
+prediction held: adding the container changed `tools/code_exec.py` only — the eight tool
+definitions, the error semantics and the other tests were untouched.

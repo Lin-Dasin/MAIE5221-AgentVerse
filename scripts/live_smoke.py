@@ -37,6 +37,7 @@ from protocol.models import (
 from runtime.client import DeepSeekClient, ModelCallError
 from runtime.profiles import load_profiles
 from sandbox.executor import SandboxToolExecutor
+from sandbox.health import cleanup_stale, container_available
 from tools.registry import build, definitions
 
 REQUIRED_ENV = ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL")
@@ -114,6 +115,28 @@ async def _run_with_client(
     graph_file: Path | None = None,
 ) -> int:
     print("client      : DeepSeekClient")
+
+    housekeeping = cleanup_stale(root)
+    if housekeeping["removed_dirs"]:
+        print(f"cleanup     : removed {len(housekeeping['removed_dirs'])} stale .pending dir(s)")
+    if housekeeping["removed_containers"]:
+        count = len(housekeeping["removed_containers"])
+        print(f"cleanup     : removed {count} orphan container(s)")
+
+    backend = os.environ.get("CODE_EXEC_BACKEND", "docker").strip().lower() or "docker"
+    if backend == "docker":
+        available, detail = container_available()
+        print(f"code_exec   : docker ({detail})")
+        if not available:
+            # Advisory only: the control lives in code_exec, which refuses to fall back to
+            # the host. Aborting here would also block runs that never execute code.
+            print(
+                f"warning     : code execution will fail until this is fixed: {detail}",
+                file=sys.stderr,
+            )
+    else:
+        print("code_exec   : subprocess (no isolation; set CODE_EXEC_BACKEND=docker)")
+
     registry = build()
     trace = JsonlTrace(root / TRACE_FILENAME)
     executor = TracingToolExecutor(SandboxToolExecutor(root, registry), trace)

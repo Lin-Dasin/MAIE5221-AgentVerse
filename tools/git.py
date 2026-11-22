@@ -36,20 +36,47 @@ IDENTITY = (
     "user.email=agentverse@localhost",
     "-c",
     "commit.gpgsign=false",
+    # A repository inside the workspace can carry hooks written by generated code, and
+    # those hooks run on `git commit` with this process's environment. Point git at a
+    # path that is not a directory so no hook is ever found.
+    "-c",
+    f"core.hooksPath={os.devnull}",
+)
+
+# Nothing outside this list reaches a git subprocess. `os.environ` contains the model and
+# search keys plus the git token, and a hook or a credential helper is enough to leak them.
+SAFE_ENV_KEYS = (
+    "PATH",
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "HOME",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
 )
 
 
 def _env() -> dict[str, str]:
-    env = dict(os.environ)
+    env = {key: os.environ[key] for key in SAFE_ENV_KEYS if key in os.environ}
     env.update(
         {
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_ASKPASS": "",
             "GIT_CONFIG_NOSYSTEM": "1",
+            # Ignore the user's global config: it can define hooks, aliases or a credential
+            # helper that would run with this process's privileges.
+            "GIT_CONFIG_GLOBAL": os.devnull,
             "LC_ALL": "C.UTF-8",
         }
     )
     return env
+
+
+def _redact(text: str, secret: str) -> str:
+    return text.replace(secret, "***") if secret else text
 
 
 def _git(
@@ -179,12 +206,13 @@ def git_push(
     if push.returncode != 0:
         raise _failure(push, "push", secret=token)
 
-    redacted = target.replace(token, "***") if token else target
+    redacted = _redact(target, token)
     return {
         "pushed": True,
         "branch": branch,
         "remote": redacted,
-        "output": (push.stderr or push.stdout).strip()[:400],
+        # `git push` writes "To <remote>" to stderr, and <remote> is the token URL.
+        "output": _redact((push.stderr or push.stdout).strip(), token)[:400],
     }
 
 

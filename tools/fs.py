@@ -16,6 +16,7 @@ from sandbox.paths import relative_to, resolve_within
 PathArguments = dict[str, Any]
 
 MAX_READ_CHARS = 200_000
+MAX_LIST_ENTRIES = 500
 
 
 def _text_argument(arguments: PathArguments, key: str) -> str:
@@ -75,7 +76,14 @@ def list_dir(
         {"name": child.name, "type": "dir" if child.is_dir() else "file"}
         for child in sorted(target.iterdir(), key=lambda item: (item.is_file(), item.name))
     ]
-    return {"path": relative_to(workspace, target) or ".", "entries": entries}
+    truncated = len(entries) > MAX_LIST_ENTRIES
+    if truncated:
+        entries = entries[:MAX_LIST_ENTRIES]
+    return {
+        "path": relative_to(workspace, target) or ".",
+        "entries": entries,
+        "truncated": truncated,
+    }
 
 
 def delete_file(
