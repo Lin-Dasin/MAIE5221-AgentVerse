@@ -6,6 +6,8 @@ repository, so nothing touches the network or the project repository.
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -170,3 +172,77 @@ def test_git_timeout_cannot_leak_the_push_url(
 
     assert token not in str(caught.value)
     assert "timed out" in str(caught.value)
+
+def test_git_subprocess_environment_excludes_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("SEARCH_API_KEY", "tvly-should-not-leak")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-should-not-leak")
+
+    env = git_tools._env()
+
+    for key in ("LLM_API_KEY", "SEARCH_API_KEY", "GITHUB_TOKEN"):
+        assert key not in env
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+
+
+async def test_commit_does_not_run_workspace_hooks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executor = make_executor(tmp_path)
+    await call(executor, "file_write", path="outputs/first.md", text="one")
+    await call(executor, "git_commit", message="create repository")
+
+    workspace = tmp_path / "workspaces" / "writer"
+    marker = workspace / "hook-ran.txt"
+    hooks = workspace / ".git" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "pre-commit").write_text(
+        f"#!/bin/sh\necho ran > \"{marker.as_posix()}\"\n", encoding="utf-8", newline="\n"
+    )
+
+    await call(executor, "file_write", path="outputs/second.md", text="two")
+    result = await call(executor, "git_commit", message="second")
+
+    assert result.ok is True
+    assert result.data["committed"] is True
+    assert not marker.exists()
+
+
+async def test_push_output_does_not_echo_the_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = "ghp_very_secret_value"
+    monkeypatch.setenv("GITHUB_SANDBOX_REPO", "https://github.com/acme/sandbox.git")
+    monkeypatch.setenv("GITHUB_TOKEN", token)
+
+    executor = make_executor(tmp_path)
+    await call(executor, "file_write", path="outputs/report.md", text="content")
+    await call(executor, "git_commit", message="ready")
+
+    real_git = git_tools._git
+
+    def fake_git(args, cwd, *, timeout=git_tools.GIT_TIMEOUT_SEC):
+        if args[0] == "push":
+            url = args[1]
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="",
+                stderr=f"To {url}\n   abc1234..def5678  main -> main\n",
+            )
+        return real_git(args, cwd, timeout=timeout)
+
+    monkeypatch.setattr(git_tools, "_git", fake_git)
+
+    result = await call(executor, "git_push")
+
+    assert result.ok is True
+    assert token not in json.dumps(result.data)
+    assert "***" in str(result.data["output"])
+
+
+def test_git_commands_disable_hooks_through_config() -> None:
+    # Cross-platform guard: the integration test above relies on the shell running the
+    # hook, which Windows may not do even when hooks are enabled.
+    assert any("core.hooksPath" in part for part in git_tools.IDENTITY)
