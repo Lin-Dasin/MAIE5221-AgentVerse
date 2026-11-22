@@ -271,6 +271,23 @@ Both flags default to True in `RunConfig()`. Without Memory, explicitly disable 
 
 Control the model, tasks, prompts, acceptance rules and budgets, and record both flags and the starting memory snapshot. Experiments may compare frozen histories or task-by-task evolution in separate memory stores. Report actual effects without presuming improvement.
 
+### Planner Memory Lifecycle
+
+For memory-enabled goal runs, assemble `build_service()` with a persistent
+`Memory` adapter and optionally pass its trace as `memory_observer`. Reuse the
+same adapter root across distinct run IDs. The service retrieves once under the
+configured Planner ID and injects only the text into the Planner model calls.
+Specialist bid calls do not receive the memory field. Explicit caller-provided
+context keeps precedence. `write_memory` controls a single terminal reflection
+using planning validity and the goal outcome; it is independent of recall.
+Failures in the Planner memory adapter add a warning without replacing the goal
+result. The Planner reflection is not a scheduled task or a node metric.
+
+The default application CLI still disables memory. To exercise the service
+with real JSONL storage, simulated model calls and recall-on/off controls, run
+`python -m pytest -q tests/test_planner_memory.py`. This tests injection and
+trace attribution; it does not measure improvement in live planning.
+
 ### Worker Memory Lifecycle Check
 
 `build_service(memory=..., memory_observer=...)` accepts an optional

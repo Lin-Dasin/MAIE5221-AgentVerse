@@ -1,9 +1,11 @@
 """Public entry point for D's CLI and harness."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from orchestrator.planner import Planner, PlanningError
+from orchestrator.planner_memory import PlannerMemoryRun
 from orchestrator.preflight import PlanContractError
 from orchestrator.scheduler import Scheduler
 from protocol.models import (
@@ -14,13 +16,24 @@ from protocol.models import (
     RunResult,
     TaskGraph,
 )
+from protocol.ports import Memory, MemoryObserver
 
 
 class CollaborationService:
-    def __init__(self, planner: Planner, scheduler: Scheduler, workers: list[AgentProfile]):
+    def __init__(
+        self,
+        planner: Planner,
+        scheduler: Scheduler,
+        workers: list[AgentProfile],
+        *,
+        memory: Memory | None = None,
+        memory_observer: MemoryObserver | None = None,
+    ):
         self.planner = planner
         self.scheduler = scheduler
         self.workers = workers
+        self.memory = memory
+        self.memory_observer = memory_observer
 
     async def run_goal(
         self,
@@ -31,6 +44,35 @@ class CollaborationService:
         goal_acceptance: list[AcceptanceRule] | None = None,
     ) -> RunResult:
         started_at = datetime.now(UTC)
+        memory_run = None
+        injection = None
+        use_memory = config.memory_enabled or config.write_memory
+        if self.memory is not None and goal.strip() and use_memory:
+            memory_run = PlannerMemoryRun(
+                goal, self.planner.profile.agent_id, config, self.memory, self.memory_observer
+            )
+            if config.memory_enabled and not memory_context:
+                memory_context = await memory_run.retrieve()
+                injection = memory_run.injected
+        result = await self._run_goal(
+            goal, config, started_at, goal_acceptance, memory_context, injection
+        )
+        if memory_run is not None:
+            if config.write_memory:
+                await memory_run.reflect(result, plan_validated=result.graph is not None)
+            result.warnings.extend(memory_run.warnings)
+            result.finished_at = datetime.now(UTC)
+        return result
+
+    async def _run_goal(
+        self,
+        goal: str,
+        config: RunConfig,
+        started_at: datetime,
+        goal_acceptance: list[AcceptanceRule] | None,
+        memory_context: str,
+        injection: Callable[[int, str | None], Awaitable[None]] | None,
+    ) -> RunResult:
         try:
             async with asyncio.timeout(config.task_timeout_sec):
                 graph = await self.planner.plan(
@@ -39,6 +81,7 @@ class CollaborationService:
                     config,
                     memory_context=memory_context,
                     goal_acceptance=goal_acceptance,
+                    on_memory_call=injection,
                 )
         except Exception as exc:
             return RunResult(

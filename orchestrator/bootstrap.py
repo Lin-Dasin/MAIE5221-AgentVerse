@@ -74,5 +74,9 @@ def build_service(
         memory_observer=memory_observer,
     )
     return CollaborationService(
-        Planner(model, planner_profile, preflight=preflight), scheduler, workers
+        Planner(model, planner_profile, preflight=preflight),
+        scheduler,
+        workers,
+        memory=memory,
+        memory_observer=memory_observer,
     )
