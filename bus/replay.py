@@ -56,8 +56,8 @@ def _parse_event(line: str, location: str) -> TraceEvent:
     )
 
 
-def read_trace(path: Path) -> list[TraceEvent]:
-    """Load a single run in file order, including a valid unfinished trace."""
+def read_trace(path: Path, *, run_id: str | None = None) -> list[TraceEvent]:
+    """Validate event envelopes and read one run in recorded sequence order."""
     events: list[TraceEvent] = []
     try:
         with path.open("rb") as source:
@@ -71,13 +71,19 @@ def read_trace(path: Path) -> list[TraceEvent]:
                 if not line:
                     continue
                 event = _parse_event(line, location)
+                if run_id is not None and event.run_id != run_id:
+                    continue
                 if events and event.run_id != events[0].run_id:
-                    raise TraceReadError(f"{location}: trace contains multiple run IDs")
+                    raise TraceReadError(
+                        f"{location}: trace contains multiple run IDs; select one with --run-id"
+                    )
                 if events and event.sequence <= events[-1].sequence:
                     raise TraceReadError(f"{location}: sequence must be strictly increasing")
                 events.append(event)
     except OSError as exc:
         raise TraceReadError(f"{path}: could not read trace ({type(exc).__name__})") from None
     if not events:
+        if run_id is not None:
+            raise TraceReadError(f"{path}: run ID {run_id!r} not found")
         raise TraceReadError(f"{path}: trace is empty")
     return events
