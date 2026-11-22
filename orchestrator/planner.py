@@ -58,41 +58,24 @@ class Planner:
 
         planner_steps = 0
 
-        async def complete(
-            messages: list[ChatMessage], max_tokens: int, *, planner_request: bool
-        ) -> ModelResponse:
-            nonlocal planner_steps
-            hook = on_memory_call if planner_request else None
-            if hook is not None:
-                planner_steps += 1
-            try:
-                response = await self.model.complete(messages, [], max_tokens=max_tokens)
-            except Exception as exc:
-                if hook is not None:
-                    await hook(planner_steps, type(exc).__name__)
-                raise
-            if hook is not None:
-                await hook(planner_steps, None)
-            return response
-
-        async def ask(
-            messages: list[ChatMessage], *, planner_request: bool = False
-        ) -> ModelResponse:
+        async def ask(messages: list[ChatMessage]) -> ModelResponse:
             nonlocal calls, tokens
             if calls >= config.max_planning_calls or tokens >= config.max_task_tokens:
                 raise PlanningError("planning budget exhausted")
-            response = await complete(
+            response = await self.model.complete(
                 messages,
-                min(config.max_output_tokens, config.max_task_tokens - tokens),
-                planner_request=planner_request,
+                [],
+                max_tokens=min(config.max_output_tokens, config.max_task_tokens - tokens),
             )
             calls += 1
             tokens += response.tokens
+            if messages is planner_messages and on_memory_call is not None:
+                await on_memory_call(planner_steps, None)
             if response.tool_calls or tokens > config.max_task_tokens:
                 raise PlanningError("planning returned tool calls or exceeded its token budget")
             return response
 
-        messages = [
+        planner_messages = messages = [
             ChatMessage(
                 role="system",
                 content=self.profile.system_prompt + "\n"
@@ -141,9 +124,20 @@ class Planner:
         ]
 
         async def generate() -> TaskGraph:
+            nonlocal planner_steps
             last_error = ""
             for _ in range(PLAN_GENERATION_ATTEMPTS):
-                response = await ask(messages, planner_request=True)
+                planner_steps += 1
+                try:
+                    response = await ask(messages)
+                except PlanningError as exc:
+                    if exc.__cause__ is not None and on_memory_call is not None:
+                        await on_memory_call(planner_steps, type(exc.__cause__).__name__)
+                    raise
+                except Exception as exc:
+                    if on_memory_call is not None:
+                        await on_memory_call(planner_steps, type(exc).__name__)
+                    raise
                 text = response.content
                 try:
                     candidate = TaskGraph.model_validate_json(extract_json(text))
