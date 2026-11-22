@@ -153,8 +153,10 @@ async def test_unsupported_dataset_rules_fail_without_model_calls(tmp_path):
 async def test_composed_service_rejects_non_worker_assignees_before_execution(tmp_path):
     service = service_for(tmp_path, ScriptedModel())
     assert service.planner.preflight is service.scheduler.preflight
-    with pytest.raises(PlanContractError, match="not a registered worker"):
-        await service.run_graph(graph(task(agent="planner")), config())
+    result = await service.run_graph(graph(task(agent="planner")), config())
+    assert result.failure_code == FailureCode.INVALID_OUTPUT
+    assert "not a registered worker" in result.failure_reason
+    assert result.tasks == []
     assert list(tmp_path.iterdir()) == []
 
 
