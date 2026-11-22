@@ -188,6 +188,7 @@ class ToolDefinition(Contract):
 
 class AgentProfile(Contract):
     agent_id: Identifier
+    # "critic" is reserved; acceptance currently uses the deterministic Verifier.
     role: Literal["planner", "worker", "critic"]
     system_prompt: str = Field(min_length=1)
     capabilities: list[str] = Field(default_factory=list)

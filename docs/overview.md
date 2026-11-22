@@ -13,7 +13,7 @@ the system decomposes it into a task graph, dispatches tasks to agents with
 different roles, executes and verifies the work, and produces deliverables.
 
 It is not a single chatbot with a long prompt. It is an orchestration layer: one
-planner, several workers with different tools, one critic, plus per-agent memory
+planner, several workers with different tools, a deterministic verifier, plus per-agent memory
 that persists across tasks.
 
 Models are served through the DeepSeek or HKGAI API only. OpenAI and Anthropic
@@ -27,31 +27,31 @@ APIs are prohibited by the course specification.
 | 2 | Autonomous delegation: decomposition, role negotiation, subtask dispatch, including worker-to-worker requests | Planner produces a task graph; a worker may request a subtask that the scheduler inserts |
 | 3 | Human-in-the-loop: pause for clarification or approval before risky actions | Approver interface with two modes: interactive and policy-driven |
 | 4 | Per-agent memory and evolution across tasks | Private memory file per agent; reflections written after a task and retrieved before similar tasks |
-| 5 | Sandbox isolation: separate working directory and execution environment per agent | One container per agent, its own workspace mounted, path validation as a second line of defence |
+| 5 | Sandbox isolation: separate working directory and execution environment per agent | One short-lived container per Docker code execution call, mounting only the assigned workspace; file tools enforce workspace path checks |
 | 6 | Tools: web search, file CRUD, code execution, git commit and push | Four tool families in `tools/`, executed either in the container or on the host |
 
-Currently A implements planning and worker execution. `Verifier.check()` is a
-deterministic acceptance port; a separate conversational Critic agent is still
-planned. Worker memory hooks exist; Planner automatic memory and Critic lifecycle
-remain A/C integration work. Private/group chat routing remains A/D integration
-work. B/C/D file/search tools, JSONL memory/profiles, file verdicts, traces and the
-offline harness are present. Git tools are tested against a local bare repository;
-container isolation and hosted Git evaluation remain incomplete.
+Currently A implements planning and Worker execution. The deterministic
+`Verifier.check()` checks declared rules and returns defects to the scheduler
+for bounded retries. The `critic` profile role is reserved; there is no separate
+conversational Critic. Worker memory hooks exist; automatic Planner memory
+remains integration work. D provides directed Worker chat and group goal runs.
+Git tools are tested against a local bare repository; hosted Git acceptance is
+separate. B provides a Docker backend for code execution.
 
 ## 3. Execution pipeline
 
 ```
 User goal
-  └→ Plan: Planner retrieves past experience, produces a task graph
+  └→ Plan: Planner produces a task graph and accepts optional memory context
        └→ Dispatch: scheduler assigns tasks to agents in dependency order
             └→ Execute: each agent calls tools inside its own sandbox
                  ├ Missing capability → request a subtask → scheduler inserts a child node
                  │                    → verified as usual → result returned to requester
                  └→ Structured report (artifact paths · changes · self-assessment · blockers)
-                      └→ Verify: Critic checks acceptance criteria
+                      └→ Verify: the deterministic verifier checks acceptance criteria
                            ├ Fail → returned with a defect list, up to a retry limit
                            └ Pass → artifacts collected, available downstream
-                                └→ Reflect: each agent writes a reflection to its private memory
+                                └→ Reflect: the Worker writes a private reflection when enabled
                                      └→ Feeds the next task
 ```
 
@@ -130,7 +130,7 @@ cannot read agent B's memory because A's container never mounts it.
 1. Before a task starts, the orchestrator copies the artifacts named in `inputs`
    from `artifacts/<run_id>/<from_task>/` into `workspaces/<assignee>/inputs/`.
 2. The worker reads only its own `inputs/` and writes to `outputs/`.
-3. After the critic passes the task, the orchestrator copies `outputs/` into
+3. After the verifier accepts the task, the orchestrator copies `outputs/` into
    `artifacts/<run_id>/<task_id>/`, making it available downstream.
 4. A failed task never reaches `artifacts/`, so downstream work cannot consume
    unverified output.
@@ -173,21 +173,22 @@ root are serialized by an exclusive lease.
 
 Six variables, defined in `.env.example`:
 
-Search/Git fallback behavior below is required of B's future adapters, not yet
-implemented here. The current client supports DeepSeek only. HKGAI needs a
-separate adapter; copying `.env.example` does not load environment variables.
+The current client supports DeepSeek only. HKGAI needs a separate adapter;
+copying `.env.example` does not load environment variables.
 
 | Variable | Purpose | If missing |
 |---|---|---|
 | `LLM_BASE_URL` | DeepSeek or HKGAI endpoint | startup fails |
 | `LLM_API_KEY` | model key | startup fails |
 | `LLM_MODEL` | model name | startup fails |
-| `SEARCH_API_KEY` | search API | falls back to key-less scraping, trace marks `search_degraded` |
+| `SEARCH_API_KEY` | search API | Web search fails explicitly. A keyless fallback is not implemented; silent degradation would make evaluation results incomparable across environments. |
 | `GITHUB_TOKEN` | push to the sandbox repository | git tool reports unavailable |
 | `GITHUB_SANDBOX_REPO` | dedicated sandbox repository | same as above |
 
-Credentials never enter an agent container. File operations and code execution run
-inside the container; web search and git run on the host.
+The Docker code executor uses a fresh container per call. Its assigned
+workspace mount persists across calls. File tools, web search and Git run
+on the host; file tools enforce path checks. See [the Docker backend guide](../docker/README.md)
+for container limits and the explicit host fallback.
 
 ## 9. Metrics
 
