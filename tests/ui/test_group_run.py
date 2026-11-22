@@ -1,12 +1,15 @@
 """Verify group task dispatch and conversation records without calling an API."""
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from bus.messages import MessageBus
-from protocol.models import AcceptanceRule, InputRef, Task, TaskGraph
+from harness.cases import load_suite
+from harness.offline import build_offline_service
+from protocol.models import AcceptanceRule, FailureCode, InputRef, RunConfig, Task, TaskGraph
 from ui import cli, group_run
 
 GOAL = "让两位成员先整理素材，再合成简报。"
@@ -40,7 +43,7 @@ def command(bus, tmp_path, *, conversation="room", sender="user", notifier=None)
     return argv
 
 
-def test_group_run_writes_request_handoff_and_result_to_the_same_room(
+def test_group_run_writes_request_assignment_handoff_and_result_to_the_same_room(
     bus, tmp_path, monkeypatch, capsys
 ):
     acceptance = tmp_path / "rules.json"
@@ -94,6 +97,7 @@ def test_group_run_writes_request_handoff_and_result_to_the_same_room(
             subtasks_total=2,
             warnings=[],
             failure_reason=None,
+            raw_result=SimpleNamespace(failure_code=None),
             duration_sec=1.25,
         )
 
@@ -114,12 +118,22 @@ def test_group_run_writes_request_handoff_and_result_to_the_same_room(
     history = reopened.history("room", "reviewer")
     assert [(event.sequence, event.sender, event.kind) for event in history] == [
         (1, "user", "message"),
-        (2, "orchestrator", "handoff"),
-        (3, "orchestrator", "message"),
+        (2, "orchestrator", "assignment"),
+        (3, "orchestrator", "handoff"),
+        (4, "orchestrator", "message"),
     ]
-    request, handoff, outcome = [json.loads(event.text) for event in history]
-    assert {row["run_id"] for row in (request, handoff, outcome)} == {run_id}
+    request, assignment, handoff, outcome = [json.loads(event.text) for event in history]
+    assert {row["run_id"] for row in (request, assignment, handoff, outcome)} == {run_id}
     assert request["goal"] == GOAL
+    assert assignment == {
+        "event": "tasks_assigned",
+        "run_id": run_id,
+        "final_task_id": "summary-task",
+        "tasks": [
+            {"task_id": "notes", "agent_id": "reviewer", "depends_on": []},
+            {"task_id": "summary-task", "agent_id": "writer", "depends_on": ["notes"]},
+        ],
+    }
     assert handoff["task_id"] == "summary-task" and handoff["agent_id"] == "writer"
     assert handoff["inputs"] == [
         {"from_task": "notes", "path": "notes.md", "destination": "inputs/notes.md"}
@@ -135,6 +149,42 @@ def test_group_run_writes_request_handoff_and_result_to_the_same_room(
     trace = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     assert [event["event"] for event in trace] == ["plan_ready", "artifacts_handed_off"]
     assert {event["run_id"] for event in trace} == {run_id}
+
+
+async def test_scheduler_broadcasts_child_assignment_with_metadata_only(bus, tmp_path):
+    bus.create_conversation("delegation", "group", ["user", "writer", "researcher", "orchestrator"])
+    suite = load_suite(Path(__file__).resolve().parents[2] / "harness" / "suites" / "dev.json")
+    case = next(case for case in suite.cases if case.task_id == "p3-delegation")
+    case.graph.summary = "raw negotiator rationale"
+    root = tmp_path / "delegation-run"
+    trace = group_run.GroupTrace(root / "trace.jsonl", bus, "delegation", "orchestrator")
+    service = build_offline_service(case, root, observer=trace)
+    config = RunConfig(memory_enabled=False, write_memory=False)
+
+    result = await service.run_graph(case.graph, config)
+
+    assert result.goal_verdict.passed
+    history = bus.history("delegation", "researcher")
+    assert [event.kind for event in history] == ["assignment", "delegation", "handoff"]
+    assignment, delegation, handoff = [json.loads(event.text) for event in history]
+    assert assignment["tasks"] == [{"task_id": "report", "agent_id": "writer", "depends_on": []}]
+    assert delegation == {
+        "event": "tasks_delegated",
+        "run_id": result.run_id,
+        "task_id": "report",
+        "agent_id": "writer",
+        "children": [{"task_id": "research", "agent_id": "researcher"}],
+    }
+    assert handoff["inputs"][0]["from_task"] == "research"
+    assert {event["run_id"] for event in (assignment, delegation, handoff)} == {result.run_id}
+    assert bus.history("delegation", "user") == history
+    assert bus.history("other", "user") == []
+    assert bus.history("direct", "user") == []
+    assert all(
+        text not in event.text
+        for event in history
+        for text in (case.graph.summary, "Offline fixture:", "# Parent draft")
+    )
 
 
 @pytest.mark.parametrize(
@@ -179,8 +229,9 @@ def test_group_run_records_unsuccessful_attempt(
             trace_path=None,
             subtasks_passed=1,
             subtasks_total=2,
-            warnings=[],
+            warnings=[internal_detail],
             failure_reason=report_reason,
+            raw_result=SimpleNamespace(failure_code=FailureCode.INVALID_OUTPUT),
             duration_sec=1.25,
         )
 
@@ -192,4 +243,6 @@ def test_group_run_records_unsuccessful_attempt(
     assert "fail" in outcome.text.lower()
     assert internal_detail not in outcome.text
     if not error_before_report:
-        assert report_reason in outcome.text
+        assert report_reason not in outcome.text
+        assert json.loads(outcome.text)["failure_code"] == "invalid_output"
+        assert json.loads(outcome.text)["warning_count"] == 1
