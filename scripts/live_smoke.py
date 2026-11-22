@@ -123,7 +123,7 @@ async def _run_with_client(
         count = len(housekeeping["removed_containers"])
         print(f"cleanup     : removed {count} orphan container(s)")
 
-    backend = os.environ.get("CODE_EXEC_BACKEND", "subprocess").strip().lower() or "subprocess"
+    backend = os.environ.get("CODE_EXEC_BACKEND", "docker").strip().lower() or "docker"
     if backend == "docker":
         available, detail = container_available()
         print(f"code_exec   : docker ({detail})")

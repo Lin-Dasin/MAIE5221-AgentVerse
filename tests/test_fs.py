@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from protocol.models import ExecutionContext, RunConfig, ToolCall, ToolResult
 from sandbox.executor import SandboxToolExecutor
 from tools.fs import MAX_READ_CHARS
@@ -136,3 +138,32 @@ async def test_binary_file_is_rejected(tmp_path: Path) -> None:
     assert result.ok is False
     assert "not UTF-8" in (result.error or "")
 
+
+
+async def test_large_directory_listing_is_truncated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tools.fs.MAX_LIST_ENTRIES", 5)
+    executor = make_executor(tmp_path)
+    outputs = tmp_path / "workspaces" / "writer" / "outputs"
+    outputs.mkdir(parents=True)
+    for index in range(8):
+        (outputs / f"file{index}.md").write_text("x", encoding="utf-8")
+
+    result = await call(executor, "file_list", path="outputs")
+
+    assert result.ok is True
+    assert result.data["truncated"] is True
+    assert len(result.data["entries"]) == 5
+
+
+async def test_execute_never_raises_when_the_workspace_path_is_a_file(tmp_path: Path) -> None:
+    executor = make_executor(tmp_path)
+    blocker = tmp_path / "workspaces"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("not a directory", encoding="utf-8")
+
+    result = await call(executor, "file_write", path="outputs/x.md", text="y")
+
+    assert result.ok is False
+    assert "FileExistsError" in (result.error or "") or "workspaces" in (result.error or "")

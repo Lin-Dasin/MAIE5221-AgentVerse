@@ -43,9 +43,21 @@ BACKEND_ENV = "CODE_EXEC_BACKEND"
 IMAGE_ENV = "CODE_EXEC_IMAGE"
 DEFAULT_IMAGE = "agentverse-sandbox:latest"
 CONTAINER_PREFIX = "agentverse-"
+CONTAINER_LABEL = "agentverse.sandbox"
 MEMORY_LIMIT = "512m"
 CPU_LIMIT = "1"
+PIDS_LIMIT = "256"
 CONTAINER_EXIT_CODE = 125
+# Docker's own failures on this path start with one of these; a program that calls
+# `sys.exit(125)` produces none of them, so the two cases are distinguishable.
+DOCKER_ERROR_MARKERS = (
+    "docker:",
+    "Error response from daemon",
+    "Unable to find image",
+    "invalid reference format",
+    "Cannot connect to the Docker daemon",
+    "is not a valid",
+)
 
 
 def _timeout_seconds(arguments: dict[str, Any]) -> float:
@@ -64,7 +76,9 @@ def _clip(text: str) -> str:
 
 
 def _backend() -> str:
-    value = os.environ.get(BACKEND_ENV, "subprocess").strip().lower()
+    # Containers are the default: the specification requires isolation for generated code,
+    # and a silent host fallback turns a missing daemon into an unnoticed security gap.
+    value = os.environ.get(BACKEND_ENV, "docker").strip().lower()
     if value not in {"subprocess", "docker"}:
         raise ValueError(f"{BACKEND_ENV} must be 'subprocess' or 'docker'")
     return value
@@ -79,7 +93,9 @@ def _mount(workspace: Path) -> str:
     return f"{workspace.resolve().as_posix()}:/workspace"
 
 
-def _command(code: str, workspace: Path, backend: str) -> tuple[list[str], str | None]:
+def _command(
+    code: str, workspace: Path, backend: str, run_id: str | None = None
+) -> tuple[list[str], str | None]:
     if backend == "subprocess":
         return [sys.executable, "-I", "-c", code], None
 
@@ -90,12 +106,29 @@ def _command(code: str, workspace: Path, backend: str) -> tuple[list[str], str |
         "--rm",
         "--name",
         name,
+        # The label lets start-up cleanup find this project's containers without relying
+        # on a name substring, which would also match unrelated containers.
+        "--label",
+        CONTAINER_LABEL,
+        "--label",
+        f"{CONTAINER_LABEL}.run={run_id or 'unknown'}",
         "--network",
         "none",
         "--memory",
         MEMORY_LIMIT,
+        "--memory-swap",
+        MEMORY_LIMIT,
         "--cpus",
         CPU_LIMIT,
+        "--pids-limit",
+        PIDS_LIMIT,
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--tmpfs",
+        "/tmp:rw,size=64m",
         "-v",
         _mount(workspace),
         "-w",
@@ -107,6 +140,13 @@ def _command(code: str, workspace: Path, backend: str) -> tuple[list[str], str |
         code,
     ]
     return command, name
+
+
+def _is_docker_failure(completed: subprocess.CompletedProcess[str]) -> bool:
+    if completed.returncode != CONTAINER_EXIT_CODE:
+        return False
+    stderr = completed.stderr or ""
+    return any(marker in stderr for marker in DOCKER_ERROR_MARKERS)
 
 
 def _remove_container(name: str) -> None:
@@ -133,7 +173,7 @@ def run_code(
 
     limit = _timeout_seconds(arguments)
     backend = _backend()
-    command, container = _command(code, workspace, backend)
+    command, container = _command(code, workspace, backend, context.config.run_id)
     started = time.monotonic()
 
     try:
@@ -158,7 +198,7 @@ def run_code(
             raise ToolFailure(f"docker backend unavailable: {type(exc).__name__}") from None
         raise ToolFailure(f"could not start the interpreter: {exc}") from exc
 
-    if backend == "docker" and completed.returncode == CONTAINER_EXIT_CODE:
+    if backend == "docker" and _is_docker_failure(completed):
         detail = (completed.stderr or "").strip().splitlines()
         raise ToolFailure(
             "container failed to start: " + (detail[-1] if detail else "exit code 125")

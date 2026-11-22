@@ -79,9 +79,11 @@ class SandboxToolExecutor:
             return failure(f"missing required argument: {', '.join(missing)}")
 
         workspace = self.workspace(context.agent_id)
-        workspace.mkdir(parents=True, exist_ok=True)
 
         try:
+            # Inside the try: a path component that is a file makes mkdir raise
+            # FileExistsError, and `execute` must never raise.
+            workspace.mkdir(parents=True, exist_ok=True)
             value = tool.handler(call.arguments, workspace, context)
             if inspect.isawaitable(value):
                 value = await value

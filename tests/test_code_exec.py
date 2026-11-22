@@ -19,6 +19,12 @@ def make_context(agent_id: str = "writer") -> ExecutionContext:
     return ExecutionContext(config=RunConfig(), task_id="t1", agent_id=agent_id, attempt=1)
 
 
+@pytest.fixture(autouse=True)
+def _subprocess_backend_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The container backend is the product default; the subprocess cases opt out."""
+    monkeypatch.setenv("CODE_EXEC_BACKEND", "subprocess")
+
+
 def make_executor(root: Path) -> SandboxToolExecutor:
     return SandboxToolExecutor(root, build())
 
@@ -198,3 +204,32 @@ async def test_unknown_backend_is_rejected(
 
     assert result.ok is False
     assert "must be 'subprocess' or 'docker'" in (result.error or "")
+
+
+def test_generated_exit_125_is_not_mistaken_for_a_container_error() -> None:
+    from tools.code_exec import _is_docker_failure
+
+    quiet = subprocess.CompletedProcess(args=[], returncode=125, stdout="", stderr="")
+    docker_error = subprocess.CompletedProcess(
+        args=[],
+        returncode=125,
+        stdout="",
+        stderr="docker: Error response from daemon: No such image: nope:latest.\n",
+    )
+
+    assert _is_docker_failure(quiet) is False
+    assert _is_docker_failure(docker_error) is True
+
+
+def test_container_command_is_hardened(tmp_path: Path) -> None:
+    from tools.code_exec import _command
+
+    command, name = _command("print(1)", tmp_path, "docker", "run-abc")
+
+    assert name is not None
+    for flag in ("--pids-limit", "--read-only", "--cap-drop", "--security-opt", "--tmpfs"):
+        assert flag in command
+    assert "--network" in command and "none" in command
+    assert "agentverse.sandbox" in command
+    assert "agentverse.sandbox.run=run-abc" in command
+
