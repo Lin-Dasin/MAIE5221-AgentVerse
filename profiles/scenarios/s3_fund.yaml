@@ -1,0 +1,6 @@
+scenario_id: scenario_3_fund
+roles:
+  fund_manager: [file_read, file_write]
+  research: [web_search, file_write]
+  risk: [file_read, file_write]
+  marketing: [file_read, file_write]

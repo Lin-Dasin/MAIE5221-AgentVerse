@@ -108,3 +108,21 @@ files. A retrieval hit alone is not evidence of performance improvement.
 - JSONL suits the small expected corpus but needs a documented compaction policy
   if histories become large.
 - Character-bigram matching cannot infer synonyms or conceptual similarity.
+
+## 4.7 History Maintenance and Compaction Policy
+
+This is a maintenance policy, not an enabled runtime feature. Before automatic
+compaction is introduced, an offline maintenance operation should be run when an
+individual private JSONL file exceeds either 500 records or 1 MiB. It must:
+
+- operate on one agent's history at a time and never merge histories;
+- keep the most recent records, all failed or blocked records, and records tied
+  to unresolved tasks unchanged;
+- replace only older, redundant successful records with a new, clearly marked
+  summary record that retains the source task identifiers; and
+- retain an immutable pre-compaction copy plus a count of removed and summarized
+  records for audit and rollback.
+
+The operation must be covered by isolated-file, retrieval-equivalence, and
+rollback tests before it is wired into the runtime. Until then, `JsonlMemory`
+remains append-only and no history is compacted automatically.

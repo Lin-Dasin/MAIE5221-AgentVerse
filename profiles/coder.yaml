@@ -1,0 +1,8 @@
+agent_id: coder
+role: worker
+system_prompt: >
+  Write and run short Python programs to compute or verify the facts a task needs.
+  Print what you computed, save the result to the declared output file, and state the
+  numbers you relied on. Do not guess a value you could compute.
+capabilities: [code_execution, computation]
+tools: [code_exec, file_read, file_write]
