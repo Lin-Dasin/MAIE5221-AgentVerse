@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
 import sqlite3
 import stat
@@ -45,7 +46,7 @@ class TaskRequest:
     inputs: tuple[str, ...]
 
 
-# Return accepted workspace-relative outputs, or None when the task fails acceptance.
+# An injected verifier can accept outputs immediately. Live discussions await human selection.
 TaskEngine = Callable[
     [TaskRequest, Callable[[], str | None], Callable[[str, str], None]],
     Awaitable[tuple[str, ...] | None],
@@ -111,7 +112,18 @@ def _copy_accepted(source: Path, destination: Path) -> tuple[str, ...]:
     return tuple(files)
 
 
-def _publish_accepted(workspace: Path, outputs: tuple[str, ...], destination: Path) -> None:
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def _publish_accepted(
+    workspace: Path,
+    outputs: tuple[str, ...],
+    destination: Path,
+    *,
+    expected_hashes: dict[str, str] | None = None,
+) -> None:
     if not outputs:
         raise ValueError("A passing scenario task must publish an artifact")
     relatives = [archive_path(output) for output in outputs]
@@ -120,13 +132,16 @@ def _publish_accepted(workspace: Path, outputs: tuple[str, ...], destination: Pa
     with TemporaryDirectory(dir=destination.parent) as stage:
         accepted = Path(stage) / "accepted"
         accepted.mkdir()
-        for name in relatives:
-            source_path = workspace / "outputs" / name
+        for output, name in zip(outputs, relatives, strict=True):
+            source_path = workspace / output
             for path in (source_path, *source_path.parents):
                 _require_unlinked(path)
                 if path == workspace:
                     break
-            copy_file(inside(workspace, f"outputs/{name}"), inside(accepted, name))
+            target = inside(accepted, name)
+            copy_file(inside(workspace, output), target)
+            if expected_hashes is not None and file_sha256(target) != expected_hashes[output]:
+                raise ValueError(f"Candidate contents do not match the discussion digest: {output}")
         accepted.rename(destination)
 
 
@@ -222,6 +237,48 @@ async def run_task(
         return accepted
 
 
+def accept_attempt(
+    session_dir: Path, number: int, attempt: str, artifacts: tuple[str, ...]
+) -> Path:
+    """Publish only the human-selected candidates from a completed discussion attempt."""
+    if number not in (1, 2) or not artifacts:
+        raise ValueError("Select a task and at least one candidate artifact")
+    session, _ = _read_session(session_dir)
+    task = session.scenario.tasks[number - 1]
+    task_dir = session_dir / "tasks" / task.task_id
+    if number == 2 and not (session_dir / "tasks" / "task-1" / "accepted").is_dir():
+        raise ValueError("Complete and accept Task 1 before accepting Task 2")
+    attempts = task_dir / "attempts"
+    workspace = inside(attempts, attempt)
+    if workspace.parent != attempts or not workspace.is_dir():
+        raise ValueError(f"Unknown attempt for {task.task_id}: {attempt}")
+    for directory in (task_dir.parent, task_dir, attempts, workspace):
+        _require_unlinked(directory)
+    accepted = task_dir / "accepted"
+    with _reserve_task(task_dir):
+        if accepted.exists():
+            raise FileExistsError(f"{task.task_id} is already accepted in this session")
+        summary_file = workspace / "discussion-summary.json"
+        if not summary_file.is_file():
+            raise ValueError("This attempt has no completed discussion summary to accept")
+        _require_unlinked(summary_file)
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        if not isinstance(summary, dict) or summary.get("stop_reason") != "max_rounds":
+            raise ValueError("Only a normally completed discussion can be accepted")
+        candidates = summary.get("candidates")
+        if not isinstance(candidates, dict) or not candidates:
+            raise ValueError("The completed discussion listed no candidate artifacts")
+        owners = {role.agent_id for role in session.scenario.roles}
+        for output in artifacts:
+            owner, separator, _ = archive_path(output).partition("/")
+            if not separator or owner not in owners or output not in candidates:
+                raise ValueError(
+                    f"Artifact is not a listed candidate from a scenario agent: {output}"
+                )
+        _publish_accepted(workspace, artifacts, accepted, expected_hashes=candidates)
+    return accepted
+
+
 def export_session(session_dir: Path, destination: Path) -> Path:
     session, bus = _read_session(session_dir)
     accepted = {
@@ -253,6 +310,14 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
     run.add_argument("run_dir", type=Path)
     run.add_argument("number", type=int, choices=(1, 2))
     run.add_argument("--profiles-dir", required=True, type=Path)
+    run.add_argument("--max-rounds", type=int, default=4)
+    run.add_argument("--max-task-tokens", type=int, default=60000)
+    run.add_argument("--max-output-tokens", type=int, default=2048)
+    accept = subcommands.add_parser("accept", help="Accept selected files from one discussion")
+    accept.add_argument("run_dir", type=Path)
+    accept.add_argument("number", type=int, choices=(1, 2))
+    accept.add_argument("--attempt", required=True, help="Run ID printed by the discussion")
+    accept.add_argument("--artifact", required=True, action="append", help="Repeat for each file")
     export = subcommands.add_parser("export", help="Package the dialogue and accepted artifacts")
     export.add_argument("run_dir", type=Path)
     export.add_argument("--output-dir", required=True, type=Path)
@@ -270,11 +335,20 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
         print(f"Posted message {event.sequence}")
     elif args.action == "run":
         if engine is None:
-            raise RuntimeError("Mid Test live execution requires the DiscussionEngine adapter")
+            from ui.scenario_engine import make_live_engine
+
+            engine = make_live_engine(
+                max_rounds=args.max_rounds,
+                max_task_tokens=args.max_task_tokens,
+                max_output_tokens=args.max_output_tokens,
+            )
         accepted = asyncio.run(run_task(session_dir, args.number, args.profiles_dir, engine))
         if accepted is None:
-            print(f"Task {args.number} did not pass acceptance")
+            print(f"Task {args.number} is unaccepted. Review any candidates with mid-test accept.")
             return 1
+        print(f"Accepted artifacts: {accepted}")
+    elif args.action == "accept":
+        accepted = accept_attempt(session_dir, args.number, args.attempt, tuple(args.artifact))
         print(f"Accepted artifacts: {accepted}")
     else:
         destination = export_session(session_dir, args.output_dir)

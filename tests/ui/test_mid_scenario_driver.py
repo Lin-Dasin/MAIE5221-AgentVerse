@@ -1,7 +1,10 @@
 """Verify the Mid Test driver with a scripted discussion engine."""
 
+import hashlib
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -131,3 +134,147 @@ async def test_task_order_and_retry_with_no_partial_publication(prepared):
     accepted = await scenario.run_task(run_dir, 1, profiles, retried)
     assert accepted is not None and (accepted / "ready.txt").read_text() == "ready"
     assert [row.text for row in bus.history(session.conversation_id, "instructor")] == [FIRST]
+
+
+@pytest.fixture
+def discussion_attempt(prepared):
+    run_dir, _, _ = prepared
+    workspace = run_dir / "tasks" / "task-1" / "attempts" / ("a" * 32)
+    names = ("outputs/dev/report.md", "outputs/qa/checks.md", "outputs/dev/draft.md")
+    candidates = {}
+    for name in names:
+        output = workspace / name
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(f"Verified {name}".encode())
+        candidates[name] = hashlib.sha256(output.read_bytes()).hexdigest()
+    summary = workspace / "discussion-summary.json"
+    summary.write_text(json.dumps({"stop_reason": "max_rounds", "candidates": candidates}))
+    return run_dir, workspace, names, summary
+
+
+def test_human_accepts_only_files_selected_from_one_attempt(discussion_attempt, prepared):
+    run_dir, workspace, (report, checks, draft), _ = discussion_attempt
+    _, profiles_dir, _ = prepared
+    assert (
+        cli.main(
+            [
+                "mid-test",
+                "accept",
+                str(run_dir),
+                "1",
+                "--attempt",
+                workspace.name,
+                "--artifact",
+                report,
+                "--artifact",
+                checks,
+            ]
+        )
+        == 0
+    )
+    accepted = workspace.parent.parent / "accepted"
+    assert (accepted / "dev/report.md").read_bytes() == (workspace / report).read_bytes()
+    assert (accepted / "qa/checks.md").read_bytes() == (workspace / checks).read_bytes()
+    assert not (accepted / "dev/draft.md").exists()
+    with pytest.raises(FileExistsError, match="already accepted"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (draft,))
+
+    async def next_task(request, human, emit):
+        assert request.inputs == ("dev/report.md", "qa/checks.md")
+        assert (request.workspace / "inputs/dev/report.md").is_file()
+        return None
+
+    assert (
+        scenario.main(
+            ["run", str(run_dir), "2", "--profiles-dir", str(profiles_dir)], engine=next_task
+        )
+        == 1
+    )
+
+
+def test_accept_rejects_unlisted_failed_and_unknown_attempts(discussion_attempt):
+    run_dir, workspace, (report, _, _), summary = discussion_attempt
+    accepted = workspace.parent.parent / "accepted"
+    with pytest.raises(ValueError, match="at least one"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, ())
+    with pytest.raises(ValueError, match="Unknown attempt"):
+        scenario.accept_attempt(run_dir, 1, "other", (report,))
+    with pytest.raises(ValueError, match="not a listed candidate"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (report, "outputs/dev/scratch.md"))
+    data = json.loads(summary.read_text())
+    data["stop_reason"] = "budget_exhausted"
+    summary.write_text(json.dumps(data))
+    with pytest.raises(ValueError, match="normally completed"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (report,))
+    summary.write_text(json.dumps({"stop_reason": "max_rounds", "candidates": {}}))
+    with pytest.raises(ValueError, match="no candidate"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (report,))
+    summary.unlink()
+    with pytest.raises(ValueError, match="no completed discussion summary"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (report,))
+    assert not accepted.exists()
+
+
+def test_digest_is_checked_on_staged_copy_before_any_file_is_accepted(
+    discussion_attempt, monkeypatch
+):
+    run_dir, workspace, (report, checks, _), _ = discussion_attempt
+    copy_file = scenario.copy_file
+
+    def changed_during_copy(source, destination):
+        copy_file(source, destination)
+        if source.name == "checks.md":
+            destination.write_bytes(b"Different bytes")
+
+    monkeypatch.setattr(scenario, "copy_file", changed_during_copy)
+    with pytest.raises(ValueError, match="discussion digest"):
+        scenario.accept_attempt(run_dir, 1, workspace.name, (report, checks))
+    assert not (workspace.parent.parent / "accepted").exists()
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ([], (4, 60000, 2048)),
+        (
+            ["--max-rounds", "2", "--max-task-tokens", "9000", "--max-output-tokens", "512"],
+            (2, 9000, 512),
+        ),
+    ],
+)
+def test_default_run_uses_live_factory_and_preserves_pending_state(
+    prepared, monkeypatch, options, expected
+):
+    run_dir, profiles_dir, _ = prepared
+    module = ModuleType("ui.scenario_engine")
+    attempts = []
+
+    def make_live_engine(*, max_rounds, max_task_tokens, max_output_tokens):
+        assert (max_rounds, max_task_tokens, max_output_tokens) == expected
+
+        async def live_engine(request, human, emit):
+            attempts.append(request.run_id)
+            return None
+
+        return live_engine
+
+    monkeypatch.setattr(module, "make_live_engine", make_live_engine, raising=False)
+    monkeypatch.setitem(sys.modules, "ui.scenario_engine", module)
+    assert (
+        cli.main(
+            [
+                "mid-test",
+                "run",
+                str(run_dir),
+                "1",
+                "--profiles-dir",
+                str(profiles_dir),
+                *options,
+            ]
+        )
+        == 1
+    )
+    assert len(attempts) == 1 and (run_dir / "tasks" / "task-1" / "attempts" / attempts[0]).is_dir()
+    assert not (run_dir / "tasks" / "task-1" / "accepted").exists()
+    with pytest.raises(ValueError, match="accept Task 1"):
+        scenario.accept_attempt(run_dir, 2, attempts[0], ("outputs/dev/report.md",))

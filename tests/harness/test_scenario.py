@@ -85,6 +85,40 @@ def test_full_profiles_keep_configuration_and_use_original_teacher_prompt(tmp_pa
         load_scenario_profiles(scenario, tmp_path)
 
 
+@pytest.mark.parametrize(
+    ("team", "policy_id"), [(TEAMS[0], "scenario_1_software"), (TEAMS[2], "scenario_3_fund")]
+)
+def test_published_policy_aliases_select_the_teacher_team(tmp_path, team, policy_id):
+    name, members = team
+    scenario = load_scenario(write_scenario(tmp_path, name, members))
+    tools = {agent: ["file_write"] for agent in members}
+    tools[members[1]] = ["file_read", "file_write"]
+    source = tmp_path / "role_c.yaml"
+    source.write_text(yaml.safe_dump({"scenario_id": policy_id, "roles": tools}), encoding="utf-8")
+    profiles = load_scenario_profiles(scenario, tmp_path)
+    assert scenario.scenario_id == name.replace("_", "-")
+    assert {agent: profile.tools for agent, profile in profiles.items()} == tools
+
+    (tmp_path / "canonical.yaml").write_text(
+        yaml.safe_dump({"scenario_id": name, "roles": tools}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="Duplicate tool policy"):
+        load_scenario_profiles(scenario, tmp_path)
+
+
+def test_unrecognized_policy_id_is_not_matched_by_role_names(tmp_path):
+    name, members = TEAMS[0]
+    scenario = load_scenario(write_scenario(tmp_path, name, members))
+    (tmp_path / "other.yaml").write_text(
+        yaml.safe_dump(
+            {"scenario_id": "scenario_1_dev", "roles": {agent: [] for agent in members}}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Missing profiles"):
+        load_scenario_profiles(scenario, tmp_path)
+
+
 def test_mismatched_policy_reports_role_ids(tmp_path):
     name, members = TEAMS[0]
     scenario = load_scenario(write_scenario(tmp_path, name, members))

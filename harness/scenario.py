@@ -13,6 +13,11 @@ INSTRUCTOR = "instructor"
 _ROLE_HEADING = re.compile(r"^## (.+?) \(([^()]+)\)[ \t]*$", re.MULTILINE)
 _PROMPT = re.compile(r"^`{3}(?:text)?[ \t]*\n(.*?)^`{3}[ \t]*$", re.MULTILINE | re.DOTALL)
 _TASK_FILES = (("task-1", "02_task_1.md"), ("task-2", "03_task_2.md"))
+# Role C's software and fund policy IDs abbreviate the official packet folder names.
+_POLICY_SCENARIOS = {
+    "scenario_1_software": "scenario-1-software-engineering",
+    "scenario_3_fund": "scenario-3-securities-fund",
+}
 
 
 class RoleSpec(Contract):
@@ -107,7 +112,10 @@ def load_scenario_profiles(scenario: ScenarioSpec, profiles_dir: Path) -> dict[s
         data = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict) and "scenario_id" in data:
             candidate = _ScenarioPolicy.model_validate(data)
-            if _scenario_id(candidate.scenario_id) == scenario.scenario_id:
+            if scenario.scenario_id in (
+                _scenario_id(candidate.scenario_id),
+                _POLICY_SCENARIOS.get(candidate.scenario_id),
+            ):
                 if policy is not None:
                     raise ValueError(f"Duplicate tool policy for {scenario.scenario_id}")
                 policy = candidate
