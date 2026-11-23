@@ -26,12 +26,14 @@ from runtime.discussion_context import (
     prompt_view,
 )
 from runtime.discussion_delivery_policy import (
+    HANDOFF_OUTPUT_TOKENS,
     INSPECTION_CALL_LIMITS,
     PRODUCTION_TOOLS,
     call_limit,
     delivery_step,
     output_path,
 )
+from runtime.discussion_handoff import contains_tool_markup, fallback, report, report_prompt
 from runtime.discussion_workflow import phase_instruction
 
 MAX_TOOL_CALLS_PER_STEP = 16
@@ -129,13 +131,51 @@ async def speak(
     listing_cache: dict[str, ToolResult] = {}
     inspection_spent: dict[str, int] = {}
     managed = delivery_mode and any(tool.name in PRODUCTION_TOOLS for tool in offered)
+    attempt_tokens_left = remaining_tokens
     if managed:
         # Fair turn ceiling within the attempt; the wrapper still meters every call.
         remaining_tokens = min(remaining_tokens, work_budget)
+    report_cap = min(HANDOFF_OUTPUT_TOKENS, config.max_output_tokens)
+
+    def snapshot(content: str) -> DiscussionTurn:
+        return DiscussionTurn(
+            round=round_number,
+            speaker=profile.agent_id,
+            content=content,
+            tool_calls=calls,
+            tool_results=results,
+            tokens=used,
+        )
+
+    def budget_stop() -> DiscussionTurn:
+        if managed and remaining_tokens < attempt_tokens_left and used < attempt_tokens_left:
+            return fallback(snapshot("Contribution quota exhausted."), "contribution_budget")
+        raise SpeakerStopped("token_budget")
+
+    async def close() -> DiscussionTurn:
+        turn = snapshot("No model report available.")
+        try:
+            return await report(
+                turn,
+                messages=report_prompt(turn, required_artifacts),
+                model=model,
+                token_counter=token_counter,
+                token_limit=remaining_tokens,
+                output_cap=report_cap,
+            )
+        except DiscussionBudgetExceeded as exc:
+            raise SpeakerStopped("token_budget") from exc
+        except TimeoutError as exc:
+            raise SpeakerStopped("timeout") from exc
+        except Exception as exc:
+            raise SpeakerStopped("model_error") from exc
+
     invalid_text_retries = 0
     for step in range(1, max_steps + 1):
+        if managed and step == max_steps:
+            return await close()
         messages = prompt_view(base, exchanges, final=False)
-        final_messages = prompt_view(base, exchanges, final=True)
+        final_messages = [] if managed else prompt_view(base, exchanges, final=True)
         if managed:
             # Prompt compaction must not hide an earlier successful write behind
             # later reads. Receipts prove execution, not current file quality.
@@ -153,7 +193,6 @@ async def speak(
                 "made if a successful write is recorded. Report unresolved defects separately.",
             )
             messages.append(receipt)
-            final_messages.insert(-1, receipt)
         if length_failures:
             length_guidance = ChatMessage(
                 role="user",
@@ -163,7 +202,8 @@ async def speak(
                 "in one tool call, and keep the final reply brief. Do not repeat oversized output.",
             )
             messages.append(length_guidance)
-            final_messages.insert(-1, length_guidance)
+            if not managed:
+                final_messages.insert(-1, length_guidance)
         active_tools = [
             tool for tool in offered if tool.name != "web_search" or search_calls < max_search_calls
         ]
@@ -182,11 +222,15 @@ async def speak(
                 ),
             )
             messages.append(reminder)
-            final_messages.insert(-1, reminder)
+            if not managed:
+                final_messages.insert(-1, reminder)
         prompt_tokens = count_tokens(token_counter, messages, active_tools)
-        final_tokens = count_tokens(token_counter, final_messages, [])
         output_cap = config.max_output_tokens
         if managed:
+            closing_messages = report_prompt(snapshot("Pending"), required_artifacts)
+            closing_reserve = (
+                count_tokens(token_counter, closing_messages, []) + report_cap + 1000
+            )
             policy = delivery_step(
                 tools=active_tools,
                 step=step,
@@ -206,45 +250,37 @@ async def speak(
                 inspection_spent=inspection_spent,
                 available=remaining_tokens - used,
                 prompt_tokens=prompt_tokens,
-                closing_reserve=final_tokens + min(512, config.max_output_tokens) + 1000,
+                closing_reserve=closing_reserve,
                 output_cap=config.max_output_tokens,
             )
-            finalizing = policy.phase == "report"
+            if policy.phase == "report":
+                return await close()
+            finalizing = False
             active_tools = policy.tools
             output_cap = policy.output_cap
-            if finalizing:
-                messages, active_tools, prompt_tokens = final_messages, [], final_tokens
-            else:
-                messages.append(
-                    ChatMessage(
-                        role="user",
-                        content=policy.instruction
-                        + " Direct file_write calls must save under outputs/. "
-                        + (
-                            "Verification reads reopen only after writing a declared target: "
-                            + json.dumps(list(required_artifacts))
-                            + ". Helper files alone do not count as the required repair."
-                            if required_artifacts
-                            else ""
-                        ),
-                    )
+            messages.append(
+                ChatMessage(
+                    role="user",
+                    content=policy.instruction
+                    + " Direct file_write calls must save under outputs/. "
+                    + (
+                        "Verification reads reopen only after writing a declared target: "
+                        + json.dumps(list(required_artifacts))
+                        + ". Helper files alone do not count as the required repair."
+                        if required_artifacts
+                        else ""
+                    ),
                 )
-                prompt_tokens = count_tokens(token_counter, messages, active_tools)
-                # Recount after policy guidance; preserve the actual closing request.
-                output_cap = min(
-                    output_cap,
-                    remaining_tokens
-                    - used
-                    - prompt_tokens
-                    - final_tokens
-                    - min(512, config.max_output_tokens)
-                    - 1000,
-                )
-                if output_cap <= 0:
-                    finalizing = True
-                    messages, active_tools, prompt_tokens = final_messages, [], final_tokens
-                    output_cap = min(512, config.max_output_tokens)
+            )
+            prompt_tokens = count_tokens(token_counter, messages, active_tools)
+            # Recount after policy guidance; preserve the actual closing request.
+            output_cap = min(
+                output_cap, remaining_tokens - used - prompt_tokens - closing_reserve
+            )
+            if output_cap <= 0:
+                return await close()
         else:
+            final_tokens = count_tokens(token_counter, final_messages, [])
             # Budget for a text response after a tool round, including a bounded
             # result view. This is a soft share; the global budget is still the cap.
             closing_reserve = final_tokens + min(512, config.max_output_tokens) + 2000
@@ -288,12 +324,12 @@ async def speak(
         output_limit = min(output_cap, remaining_tokens - used - prompt_tokens)
         # When a normal tool request no longer fits, try the smaller final
         # response once. The counter is an estimate, not a billing guarantee.
-        if output_limit <= 0 and not finalizing:
+        if output_limit <= 0 and not finalizing and not managed:
             finalizing = True
             messages, active_tools, prompt_tokens = final_messages, [], final_tokens
             output_limit = min(output_cap, remaining_tokens - used - prompt_tokens)
         if output_limit <= 0:
-            raise SpeakerStopped("token_budget")
+            return budget_stop()
         try:
             response = await model.complete(
                 messages.copy(), active_tools.copy(), max_tokens=output_limit
@@ -303,9 +339,11 @@ async def speak(
         except ModelOutputLimitError as exc:
             used += exc.tokens or (prompt_tokens + output_limit)
             if used >= remaining_tokens:
-                raise SpeakerStopped("token_budget") from exc
+                return budget_stop()
             length_failures += 1
             if length_failures > 1 or step == max_steps:
+                if managed:
+                    return fallback(snapshot("Work response was discarded."), "work_truncated")
                 raise SpeakerStopped("model_error") from exc
             continue
         except TimeoutError as exc:
@@ -314,10 +352,10 @@ async def speak(
             raise SpeakerStopped("model_error") from exc
         used += response.tokens or (prompt_tokens + output_limit)
         if used > remaining_tokens:
-            raise SpeakerStopped("token_budget")
+            return budget_stop()
 
         if not response.tool_calls:
-            if managed and ("DSML" in response.content and "<" in response.content):
+            if managed and contains_tool_markup(response.content):
                 if finalizing or invalid_text_retries or step >= max_steps - 1:
                     raise SpeakerStopped("invalid_model_output")
                 invalid_text_retries += 1
@@ -358,14 +396,7 @@ async def speak(
             ):
                 provisional_reply = response.content
                 continue
-            return DiscussionTurn(
-                round=round_number,
-                speaker=profile.agent_id,
-                content=response.content,
-                tool_calls=calls,
-                tool_results=results,
-                tokens=used,
-            )
+            return snapshot(response.content)
         if finalizing:
             raise SpeakerStopped("step_limit")
         ids = {call.call_id for call in response.tool_calls}
@@ -376,7 +407,7 @@ async def speak(
         ):
             raise SpeakerStopped("invalid_model_output")
         if used == remaining_tokens:
-            raise SpeakerStopped("token_budget")
+            return budget_stop()
         exchange = [
             ChatMessage(
                 role="assistant",

@@ -5,6 +5,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from copy import copy
 
+from protocol.delivery import DeliveryHandoffTurn
 from protocol.models import (
     AgentProfile,
     ChatMessage,
@@ -121,6 +122,15 @@ class RoundRobinDiscussionEngine:
                 stopped_reason=reason,
             )
 
+        async def poll_human() -> None:
+            async with asyncio.timeout(HUMAN_POLL_TIMEOUT_SEC):
+                message = await human.next_message()
+            if message is not None:
+                if message.role != "user" or message.tool_calls or message.tool_call_id:
+                    raise ValueError("HumanInput must return a plain user message")
+                if message.content.strip():
+                    public_history.append(ChatMessage(role="user", content=message.content))
+
         for round_number in range(1, config.max_rounds + 1):
             order = config.speakers[moderator_index:] + config.speakers[:moderator_index]
             round_start = remaining
@@ -131,6 +141,8 @@ class RoundRobinDiscussionEngine:
                 else remaining * 2 // 5
             )
             for position, speaker in enumerate(order):
+                if not remaining:
+                    return finish("token_budget")
                 context = ExecutionContext(
                     config=run_config, task_id=config.task_id, agent_id=speaker, attempt=1
                 )
@@ -162,7 +174,7 @@ class RoundRobinDiscussionEngine:
                     return finish(exc.reason)
                 except TimeoutError:
                     return finish("timeout")
-                remaining -= turn.tokens
+                remaining = max(0, remaining - turn.tokens)
                 turns.append(turn)
                 public_history.append(
                     ChatMessage(role="assistant", content=f"[{turn.speaker}] {turn.content}")
@@ -173,20 +185,26 @@ class RoundRobinDiscussionEngine:
                             await emit(turn.model_copy(deep=True))
                     except TimeoutError:
                         return finish("timeout")
+                if isinstance(turn, DeliveryHandoffTurn) and position < len(order) - 1:
+                    try:
+                        await poll_human()
+                    except TimeoutError:
+                        return finish("timeout")
 
+            if self._delivery_mode and remaining == round_start and all(
+                isinstance(turn, DeliveryHandoffTurn)
+                and turn.handoff_issue == "contribution_budget"
+                for turn in turns[-len(order):]
+            ):
+                # None of the turn shares could fit even a report; do not spin.
+                return finish("token_budget")
             if round_number < config.max_rounds:
                 if not remaining:
                     return finish("token_budget")
                 try:
-                    async with asyncio.timeout(HUMAN_POLL_TIMEOUT_SEC):
-                        message = await human.next_message()
+                    await poll_human()
                 except TimeoutError:
                     return finish("timeout")
-                if message is not None:
-                    if message.role != "user" or message.tool_calls or message.tool_call_id:
-                        raise ValueError("HumanInput must return a plain user message")
-                    if message.content.strip():
-                        public_history.append(ChatMessage(role="user", content=message.content))
             moderator_index = (moderator_index + 1) % len(config.speakers)
 
-        return finish("max_rounds")
+        return finish("token_budget" if self._delivery_mode and not remaining else "max_rounds")
