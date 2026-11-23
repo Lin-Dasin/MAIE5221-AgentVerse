@@ -263,11 +263,19 @@ def accept_attempt(
             raise ValueError("This attempt has no completed discussion summary to accept")
         _require_unlinked(summary_file)
         summary = json.loads(summary_file.read_text(encoding="utf-8"))
-        if not isinstance(summary, dict) or summary.get("stop_reason") != "max_rounds":
+        if not isinstance(summary, dict):
+            raise ValueError("Only a normally completed discussion can be accepted")
+        managed = summary.get("mode") == "managed"
+        if managed:
+            if summary.get("status") != "passed" or summary.get("stop_reason") != "accepted":
+                raise ValueError("All managed checks must pass before final acceptance")
+        elif summary.get("stop_reason") != "max_rounds":
             raise ValueError("Only a normally completed discussion can be accepted")
         candidates = summary.get("candidates")
         if not isinstance(candidates, dict) or not candidates:
             raise ValueError("The completed discussion listed no candidate artifacts")
+        if managed and set(artifacts) != candidates.keys():
+            raise ValueError("Accept the full managed candidate set together")
         owners = {role.agent_id for role in session.scenario.roles}
         for output in artifacts:
             owner, separator, _ = archive_path(output).partition("/")
@@ -310,9 +318,15 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
     run.add_argument("run_dir", type=Path)
     run.add_argument("number", type=int, choices=(1, 2))
     run.add_argument("--profiles-dir", required=True, type=Path)
-    run.add_argument("--max-rounds", type=int, default=4)
+    run.add_argument("--max-rounds", type=int, help="Default: 4 in open mode, 1 in managed mode")
     run.add_argument("--max-task-tokens", type=int, default=60000)
     run.add_argument("--max-output-tokens", type=int, default=2048)
+    run.add_argument(
+        "--managed", action="store_true", help="Run automated rework for newsroom or fund Task 1"
+    )
+    run.add_argument(
+        "--max-rework-rounds", type=int, choices=range(4), help="Managed mode, default: 2"
+    )
     accept = subcommands.add_parser("accept", help="Accept selected files from one discussion")
     accept.add_argument("run_dir", type=Path)
     accept.add_argument("number", type=int, choices=(1, 2))
@@ -334,14 +348,30 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
         event = bus.publish(session.conversation_id, INSTRUCTOR, "message", args.text)
         print(f"Posted message {event.sequence}")
     elif args.action == "run":
+        if args.max_rework_rounds is not None and not args.managed:
+            parser.error("--max-rework-rounds requires --managed")
         if engine is None:
             from ui.scenario_engine import make_live_engine
 
-            engine = make_live_engine(
-                max_rounds=args.max_rounds,
+            rounds = args.max_rounds
+            if rounds is None:
+                rounds = 1 if args.managed else 4
+            limits = dict(
+                max_rounds=rounds,
                 max_task_tokens=args.max_task_tokens,
                 max_output_tokens=args.max_output_tokens,
             )
+            if args.managed:
+                session, _ = _read_session(session_dir)
+                engine = make_live_engine(
+                    managed_task=(session.scenario.scenario_id, args.number),
+                    max_rework_rounds=(
+                        2 if args.max_rework_rounds is None else args.max_rework_rounds
+                    ),
+                    **limits,
+                )
+            else:
+                engine = make_live_engine(**limits)
         accepted = asyncio.run(run_task(session_dir, args.number, args.profiles_dir, engine))
         if accepted is None:
             print(f"Task {args.number} is unaccepted. Review any candidates with mid-test accept.")

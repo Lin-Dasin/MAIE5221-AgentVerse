@@ -24,7 +24,7 @@ from ui.scenario import (
 )
 
 if TYPE_CHECKING:
-    from protocol.models import DiscussionTurn
+    from protocol.models import DiscussionConfig, DiscussionTurn
 
 
 class _HumanInput:
@@ -100,6 +100,43 @@ def _stage_candidates(request: TaskRequest, executor: SandboxToolExecutor) -> di
     return candidates
 
 
+def _prepare_discussion(
+    request: TaskRequest,
+    *,
+    max_rounds: int,
+    max_task_tokens: int,
+    max_output_tokens: int,
+) -> tuple["DiscussionConfig", SandboxToolExecutor]:
+    from protocol.models import DiscussionConfig
+
+    speakers = list(request.profiles)
+    config = DiscussionConfig(
+        conversation_id=request.conversation_id,
+        run_id=request.run_id,
+        task_id=request.task.task_id,
+        goal=request.task.text,
+        speakers=speakers,
+        moderator=speakers[0],
+        max_rounds=max_rounds,
+        max_task_tokens=max_task_tokens,
+        max_output_tokens=max_output_tokens,
+    )
+    tools = registry.build()
+    required = {name for profile in request.profiles.values() for name in profile.tools}
+    if unknown := required - tools.keys():
+        raise ValueError(f"Unknown scenario tools: {', '.join(sorted(unknown))}")
+    executor = SandboxToolExecutor(
+        request.workspace, {name: tools[name] for name in sorted(required)}
+    )
+    for speaker in speakers:
+        workspace = executor.workspace(speaker)
+        (workspace / "outputs").mkdir(parents=True)
+        for relative in request.inputs:
+            path = f"inputs/{relative}"
+            copy_file(inside(request.workspace, path), inside(workspace, path))
+    return config, executor
+
+
 def discussion_engine(
     model: ModelClient,
     *,
@@ -108,38 +145,17 @@ def discussion_engine(
     max_output_tokens: int = 2048,
 ) -> TaskEngine:
     """Run open discussion, retaining candidate files for explicit human acceptance."""
-    from protocol.models import DiscussionConfig
-
     discussion = import_module("orchestrator.discussion")
 
     async def run(
         request: TaskRequest, human: Callable[[], str | None], emit: Callable[[str, str], None]
     ) -> None:
-        speakers = list(request.profiles)
-        config = DiscussionConfig(
-            conversation_id=request.conversation_id,
-            run_id=request.run_id,
-            task_id=request.task.task_id,
-            goal=request.task.text,
-            speakers=speakers,
-            moderator=speakers[0],
+        config, executor = _prepare_discussion(
+            request,
             max_rounds=max_rounds,
             max_task_tokens=max_task_tokens,
             max_output_tokens=max_output_tokens,
         )
-        tools = registry.build()
-        required = {name for profile in request.profiles.values() for name in profile.tools}
-        if unknown := required - tools.keys():
-            raise ValueError(f"Unknown scenario tools: {', '.join(sorted(unknown))}")
-        executor = SandboxToolExecutor(
-            request.workspace, {name: tools[name] for name in sorted(required)}
-        )
-        for speaker in speakers:
-            workspace = executor.workspace(speaker)
-            (workspace / "outputs").mkdir(parents=True)
-            for relative in request.inputs:
-                path = f"inputs/{relative}"
-                copy_file(inside(request.workspace, path), inside(workspace, path))
 
         async def publish(turn: "DiscussionTurn") -> None:
             _share_outputs(request, executor, turn.speaker)
@@ -193,25 +209,48 @@ def discussion_engine(
 
 
 def make_live_engine(
-    *, max_rounds: int, max_task_tokens: int, max_output_tokens: int
+    *,
+    max_rounds: int,
+    max_task_tokens: int,
+    max_output_tokens: int,
+    managed_task: tuple[str, int] | None = None,
+    max_rework_rounds: int = 2,
 ) -> TaskEngine:
     """Construct the configured DeepSeek client inside the running event loop."""
     if find_spec("orchestrator.discussion") is None:
         raise RuntimeError("Mid Test live execution requires Role A's discussion engine (PR #40)")
     if min(max_rounds, max_task_tokens, max_output_tokens) < 1:
         raise ValueError("Mid Test limits must be positive integers")
+    if managed_task is not None:
+        from ui.scenario_delivery import validate_managed_task
+
+        validate_managed_task(*managed_task)
+        if find_spec("orchestrator.delivery") is None:
+            raise RuntimeError("Managed Mid Test requires Role A's delivery runner (PR #40)")
 
     async def run(
         request: TaskRequest, human: Callable[[], str | None], emit: Callable[[str, str], None]
     ) -> None:
         client = DeepSeekClient.from_environment()
         try:
-            engine = discussion_engine(
-                client,
+            limits = dict(
                 max_rounds=max_rounds,
                 max_task_tokens=max_task_tokens,
                 max_output_tokens=max_output_tokens,
             )
+            if managed_task is None:
+                engine = discussion_engine(client, **limits)
+            else:
+                from ui.scenario_delivery import managed_discussion_engine
+
+                scenario, number = managed_task
+                engine = managed_discussion_engine(
+                    client,
+                    scenario_id=scenario,
+                    number=number,
+                    max_rework_rounds=max_rework_rounds,
+                    **limits,
+                )
             await engine(request, human, emit)
         finally:
             await client.aclose()

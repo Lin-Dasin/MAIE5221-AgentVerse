@@ -88,6 +88,42 @@ The export includes `transcript.md`, `manifest.json` and portable copies under
 accepted artifacts and whitelisted coordination metadata. Keep raw tool
 arguments, results, private conversations and diagnosis in internal records.
 
+## Run Task 1 with automated rework
+
+The newsroom and fund scenarios support `--managed` for Task 1 in a checkout
+containing Role A's delivery runner and Role C's scenario policies. The other
+tasks use the open discussion commands above. Managed mode defaults to one
+initial round and up to two rework rounds. The limit flags still apply. A new
+instructor message pauses managed execution for review of the changed plan.
+
+```powershell
+python -m ui.cli mid-test run $session 1 --profiles-dir profiles/scenarios --managed
+```
+
+- **Newsroom:** the reporter writes `event-evidence.json` for an event from the last 120 days using
+  an official HKUST source excerpt from the reporter's own Tavily results in this
+  run. The editor produces `hkust-news.md` using that evidence. Missing or
+  contradictory evidence goes back to the reporter. If the article depends on
+  invalid evidence, the editor also revises it after receiving the new evidence.
+- **Fund:** the fund manager writes `allocation.json` and
+  `investment-proposal.md`. The checker recalculates position weights, HKD
+  amounts, class subtotals and the stock-only stress scenario, and compares them
+  with the proposal's required summary table.
+
+The run records per-requirement defects, artifact hashes and rework attempts in
+`discussion-summary.json`. Once the automated checks pass, review the complete
+candidate set for factual and editorial quality. Accept both files from the same
+attempt using repeated `--artifact` options. For example, in the newsroom run:
+
+```powershell
+python -m ui.cli mid-test accept $session 1 --attempt '<task-1-run-id>' --artifact 'outputs/reporter/event-evidence.json' --artifact 'outputs/editor/hkust-news.md'
+```
+
+Automated checks cover the recorded source excerpt, required article elements,
+and the allocation arithmetic. Full-source verification and unstructured prose
+still need final review. After acceptance, run Task 2 in the same session using
+the open mode.
+
 ## Check the deliverables
 
 | Scenario | What to open or check |
@@ -106,9 +142,12 @@ origins.
 
 ```powershell
 python -m pytest -q tests/harness/test_scenario.py tests/harness/test_scenario_export.py tests/ui/test_mid_scenario_driver.py tests/ui/test_mid_scenario_engine.py
+python -m pytest -q tests/harness/test_scenario_newsroom.py tests/harness/test_scenario_portfolio.py tests/ui/test_mid_scenario_delivery.py tests/ui/test_mid_portfolio_delivery.py
 ```
 
 The driver tests use a scripted engine to check task order, messages and scoring
 export. With PR #40 present, the adapter tests drive the discussion engine with a
 scripted model and real file tools to check cross-role copies and task handoff.
-Use the live run and explicit acceptance steps above to prepare a bundle.
+The managed adapter also has offline tests for evidence-based rework and final
+acceptance. Use the live run and explicit acceptance steps above to prepare a
+bundle.
