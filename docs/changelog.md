@@ -2,6 +2,106 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-23 — Managed Delivery Allocation and Persisted Repair
+
+- Removed the second round reserve inside `DeliveryDiscussionRunner`'s managed
+  engine policy. The first four-person contribution at 240k now has a 36k
+  ceiling instead of a 14.4k work share; the total cap and repair reserve remain.
+- Added bounded inspect/produce/verify/report tool phases, adaptive output
+  limits, dispatch-enforced inspection quotas and a targeted source-check
+  opportunity during repair. Protected tools remain unavailable.
+- Added per-repair declared-file fingerprint comparisons, explicit no-progress
+  feedback, team-wide final-owner/path mapping and recorded candidate handoffs.
+  Changed bytes never replace acceptance. Current write receipts remain in
+  final prompts; plain-text DSML is never executed.
+- Added deterministic behavioral regressions and bounded real DeepSeek/Tavily
+  repair diagnostics using the previously unchanged fact-check article.
+  These probes are not a new full Mid Test score. See
+  [managed execution policy](discussion-execution-policy.md) for scope and
+  [cumulative validation summary](report/role-a-discussion-validation.md) for
+  the published results and retained local evidence locations.
+  Original discussion contracts and B/C/D production code are unchanged.
+- Final validation: 80 focused and 468 full-suite tests passed with Docker and
+  zero skips; Ruff and whitespace checks passed. The final bounded live probe
+  persisted the intended article, but does not establish semantic acceptance.
+
+
+## 2026-11-23 — Discussion Acceptance and Bounded Rework (Local)
+
+- Added an opt-in `DeliveryDiscussionRunner`, separate delivery contracts and
+  reviewer port without changing the frozen discussion API. Caller-approved
+  requirements bind the original goal/instructions, owner and actual paths.
+- Check file existence/hash and supplied machine/semantic verdicts, route failed
+  requirements only to their owners, and recheck all requirements after repair.
+  Missing review remains unverified; retries default to two rounds.
+- Share one budget across attempts, including incomplete/error calls, reserve
+  repair allowance, preserve human corrections and block protected tools.
+  Reuse repeated directory listings until a possibly mutating call occurs.
+- Added lifecycle regressions with real B file tools and D file verification.
+  These controls do not establish a new live Mid Test completion rate.
+  See [integration details and boundaries](discussion-acceptance-loop.md).
+- Validation: 47 focused tests and 448 full-suite tests passed, including
+  Docker, with zero skips; Ruff and diff whitespace checks passed.
+
+## 2026-11-23 — Discussion Delivery and Output-Limit Recovery (Local)
+
+- Added general build/complete/review/deliver guidance, a write/check evidence
+  ledger, bounded research, one action reminder, and soft per-round allowances.
+  Budget pressure preserves a bounded write/check opportunity before final text.
+  Source-file views retain more content for editing; original tool evidence is
+  unchanged. No task-specific solutions were embedded in the runtime.
+- Added `ModelOutputLimitError` with usage metadata and one budget/step-bounded
+  retry for a shorter response. Truncated tool arguments are never executed.
+  The existing task-graph loop and frozen discussion signatures remain unchanged.
+- Tested explicit 120,000/4,096 and 240,000/4,096 task/output caps, then used
+  240,000/8,192 for the current six-task retest. Shared defaults remain
+  60,000/2,048. A local adapter records candidate copies across private
+  workspaces; no B/C/D production modules were edited.
+- Validation: 53 focused tests, 414 full-suite tests with Docker, Ruff and
+  whitespace checks passed. Independent Docker evaluation of the generated
+  booking CLI passed nine controls and its ten agent-written tests. Dashboard
+  evaluation passed seven of ten controls and exposed missing browser
+  interactivity and an incorrect per-day threshold. The six live cases all
+  reached four rounds, consuming 1,259,307 returned tokens in 792.359 seconds;
+  local core-goal acceptance was 1/6, not six successes. See
+  [delivery validation](discussion-delivery-validation.md) for limits and
+  responsibility boundaries; artifacts alone do not establish task completion.
+
+## 2026-11-23 — Discussion Budget and Context Fix (Local)
+
+- Kept the 60,000-token default and the frozen discussion contracts. Replaced
+  the byte-per-token reservation with an injectable prompt counter and a
+  language-aware fallback estimate with a margin. Returned provider usage
+  remains the accounting source; missing usage charges the full reservation.
+- Added bounded assistant-history and tool-result views while preserving human
+  instructions, the current goal and full evidence. Latest tool calls retain
+  their IDs, arguments and reasoning; older complete exchanges become labeled
+  observations. Status, exit codes and exact source links take priority.
+- Added a soft per-speaker exploration share and a reserved final text phase.
+  The last model step offers no tools, and any tool calls returned in this
+  phase are rejected before dispatch. Prompts now ask for concrete deliverables
+  and honest partial results instead of repeated planning.
+- Validation: 29 discussion tests and 400 full-suite tests passed, including
+  Docker controls; Ruff passed. All six original blocked prompts fit their
+  remaining budgets after the context/counter changes in an offline comparison.
+  This is not a six-task success claim. Live S2 completed contributions increased
+  from 4/0 to 12/11, but both tasks still stopped near 56,000 returned tokens and
+  produced no artifact files. End-to-end completion is not established. See the
+  budget policy for the comparison caveats. No B/C/D production modules were
+  changed by this fix.
+
+## 2026-11-23 — Mid Test Discussion Engine
+
+- Added Role A's shared discussion models and ports plus a standalone runner
+  with rotating speakers, public history, round-boundary human input, and
+  turn callbacks. The existing task graph runtime and Planner entry points
+  are unchanged.
+- Added a per-persona tool loop with shared discussion token limits and a
+  per-turn step and time limit. Tool details stay out of public history, and
+  tools requiring approval are not executed on this path.
+- Added offline discussion coverage and documented the D adapter boundary.
+  Formal scenario runs and cross-task workspace handoff remain integration work.
+
 ## 2026-11-21 — Worker Memory Injection and Trace Evidence
 
 - Added an optional `MemoryObserver` port and metadata-only `MemoryEvent` to A's
