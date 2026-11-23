@@ -40,7 +40,7 @@ For managed profiles with permitted `file_write` or `code_exec`,
 | Targeted source check | During repair, use one additional step for missing source evidence or write immediately | Only available when search quota and sufficient budget remain; no directory listings or local reads; normal production output cap |
 | Produce | Persist a draft or defect fix using `file_write` / `code_exec` | No list/read/search calls; retain the configured output cap (8,192 in the previous Mid Test), reduced if needed to reserve closing tokens |
 | Verify | Read the saved result, run short checks, or write another fix | Opens after a successful write to a declared target (or an outputs/ file for supporting roles without targets); no listings/search; acceptance is separate |
-| Report | State actual paths, unresolved defects and blockers | No tools, output capped at 512 or the configured smaller limit |
+| Report | Hand off recorded paths and checks in at most three short bullets | Fresh, tool-free prompt; output capped at 1,024 or the smaller configured/affordable limit |
 
 A contribution has at most two directory-list dispatches, four inspection
 reads and six reads in total. The two additional reads remain available for
@@ -63,11 +63,16 @@ the configured larger limit. Its spent tokens are still charged. File writes
 replace file contents, so prompts recommend small complete files, not appending
 fragments by repeated replacement.
 
-Plain-text DSML tool markup is never executed. It receives at most one
-structured-tool corrective opportunity; repeated markup fails explicitly.
-Successful current-contribution write receipts also survive final prompt
-compaction, so later reads do not erase the evidence supplied to the model.
-Receipts describe executed calls, not final quality or continued file existence.
+Plain-text DSML tool markup is never executed. In the work phase it receives
+at most one structured-tool corrective opportunity. The separate closing
+prompt includes recorded actions without replaying production instructions,
+tool packets or entire tool outputs. If the closing reply is truncated, it
+can be retried once as a one-line handoff, subject to the same shared budget.
+An invalid report or a second truncation produces a marked automatic handoff.
+It only repeats recorded tool evidence; later reads do not erase write
+receipts, and the handoff does not certify work. See
+[truncation recovery](discussion-truncation-recovery.md) for downstream
+behavior and validation.
 None of these controls guarantees that a model will produce correct work.
 They provide bounded writing opportunities and stop directory discovery from
 using the production phase. When evidence is insufficient, an honest blocker
@@ -77,7 +82,7 @@ is preferable to an invented source or an unverified success claim.
 
 All participants now receive the same final-owner/path map as well as their
 own requirements. Rework receives the recorded successful writes and execution
-checks from prior completed turns. Candidate-copy paths are explicitly an
+checks from prior turns, including marked automatic handoffs. Candidate-copy paths are explicitly an
 adapter convention; A neither copies workspaces nor claims a copy exists.
 
 Before and immediately after each repair, A fingerprints **each declared
