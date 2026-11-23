@@ -35,6 +35,7 @@ def write_and_report(path, text):
 class NewsroomModel:
     def __init__(self, *, prior_path=None):
         self.requests = []
+        self.tool_offers = []
         self.responses = deque()
         if prior_path:
             self.responses.append(tool_call("file_read", path=prior_path))
@@ -46,6 +47,7 @@ class NewsroomModel:
 
     async def complete(self, messages, tools, *, max_tokens):
         self.requests.append((messages, {tool.name for tool in tools}))
+        self.tool_offers.append({tool.name: tool.description for tool in tools})
         return self.responses.popleft()
 
     def reads(self):
@@ -111,7 +113,8 @@ async def test_newsroom_candidate_sharing_and_accepted_handoff(tmp_path):
     assert await scenario.run_task(session, 2, profiles, engine) is None
     assert not second.responses
     assert second.reads() == {prior_path: LEAD, "inputs/shared/reporter/lead.md": LEAD}
-    assert any(prior_path in message.content for message in second.requests[0][0])
+    assert prior_path in second.tool_offers[0]["file_read"]
+    assert all(prior_path not in offer.get("file_write", "") for offer in second.tool_offers)
     (attempt,) = (session / "tasks/task-2/attempts").iterdir()
     for agent in NEWSROOM_TOOLS:
         inputs = attempt / "workspaces" / agent / "inputs"

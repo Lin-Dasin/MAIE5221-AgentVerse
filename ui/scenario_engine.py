@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from harness.scenario import INSTRUCTOR
 from orchestrator.artifacts import copy_file, inside
-from protocol.models import ChatMessage
+from protocol.models import ChatMessage, ToolDefinition
 from protocol.ports import ModelClient
 from runtime.client import DeepSeekClient
 from sandbox.executor import SandboxToolExecutor
@@ -45,22 +45,33 @@ def _history(request: TaskRequest) -> list[ChatMessage]:
             messages.append(ChatMessage(role="user", content=event.text))
         elif event.sender == NOTIFIER or event.sender in request.profiles:
             messages.append(ChatMessage(role="assistant", content=f"[{event.sender}] {event.text}"))
-    paths = ", ".join(f"inputs/{path}" for path in request.inputs) or "none"
-    messages.append(
-        ChatMessage(
-            role="assistant",
-            content=(
-                "[workspace] Save files you want others to inspect under outputs/. "
-                "After your turn, files in outputs/ become available to other roles at "
-                "inputs/shared/<author>/<path relative to outputs/>. Mention the exact "
-                "shared paths in your public message. The accepted files carried forward "
-                f"from the previous task are at these exact paths: {paths}. If files are listed, "
-                "roles with file_read should consult them early and carry forward useful context. "
-                "Collect evidence for the current task independently."
-            ),
-        )
-    )
     return messages
+
+
+def _file_tools(executor: SandboxToolExecutor, inputs: tuple[str, ...]) -> list[ToolDefinition]:
+    guidance = {
+        "file_read": (
+            " Read your own drafts from outputs/. Read teammates' candidate files at "
+            "inputs/shared/<author>/<path relative to outputs/> using their handoff paths."
+        ),
+        "file_write": (
+            " Save files intended for group review below outputs/. After your turn, others can "
+            "read them at inputs/shared/<your agent id>/<path relative to outputs/>. "
+            "Include the exact shared paths in your public handoff."
+        ),
+    }
+    if inputs:
+        paths = json.dumps([f"inputs/{path}" for path in inputs], ensure_ascii=False)
+        guidance["file_read"] += (
+            " Read the accepted prior-task artifacts relevant to your role before drafting. "
+            f"Their exact paths in your workspace are {paths}."
+        )
+    return [
+        tool.model_copy(update={"description": tool.description + guidance[tool.name]})
+        if tool.name in guidance
+        else tool
+        for tool in executor.tool_definitions()
+    ]
 
 
 def _share_outputs(request: TaskRequest, executor: SandboxToolExecutor, speaker: str) -> None:
@@ -134,7 +145,9 @@ def discussion_engine(
             _share_outputs(request, executor, turn.speaker)
             emit(turn.speaker, turn.content)
 
-        result = await discussion.RoundRobinDiscussionEngine(executor.tool_definitions()).run(
+        result = await discussion.RoundRobinDiscussionEngine(
+            _file_tools(executor, request.inputs)
+        ).run(
             config,
             profiles=request.profiles,
             history=_history(request),
