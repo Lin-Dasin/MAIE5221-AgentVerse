@@ -16,6 +16,10 @@ async def test_shared_client_plan_to_real_archive_and_goal_verdict(tmp_path, mon
         [
             {"content": "OK"},
             {"content": planned.model_dump_json()},
+            # The repository profiles include the code-execution Worker. Keep its
+            # synthetic bid in the response stream so later bids and final planning
+            # responses remain aligned with the profile iteration order.
+            {"content": '{"task_ids":[],"rationale":"No code execution required"}'},
             {"content": '{"task_ids":[],"rationale":"No search required"}'},
             {"content": '{"task_ids":["notes"],"rationale":"Can write Markdown"}'},
             {"content": planned.model_dump_json()},
