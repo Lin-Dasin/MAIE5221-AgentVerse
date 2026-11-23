@@ -80,9 +80,10 @@ python -m harness.memory_recall --output results/m2-bilingual/evaluation.json
 The JSON output records each seed title, query, expected marker, returned text,
 per-case hit flag, language totals, and the policy strings used for this version.
 The preceding M2 baseline documented English 3/3 and Chinese 0/3 because the
-ASCII-only tokenizer discarded Chinese titles. The CJK-bigram change must be
-re-run through this command and its resulting JSON retained as the corrected
-measurement; results must not be inferred from unit-test status alone.
+ASCII-only tokenizer discarded Chinese titles. With the CJK-bigram policy, the
+deterministic fixture suite returns English 3/3 and Chinese 3/3. The command
+above must still be used to retain a versioned JSON result for a report or demo;
+fixture recall is evidence of retrieval selection, not an M3 performance claim.
 
 ## 4.5 M3 Comparison Protocol
 
@@ -97,6 +98,38 @@ evolving-memory comparison, use separate seeded stores and preserve the ordered
 task sequence. Report goal completion rate, subtask completion rate, elapsed
 time, Worker tokens, failure categories, trace references, and the raw result
 files. A retrieval hit alone is not evidence of performance improvement.
+
+### Current M3 Readiness and Cross-Role Dependencies
+
+The repository already has a Worker-memory lifecycle control in
+`scripts/worker_memory_demo.py`: its first task writes a private reflection and
+its second task either receives that reflection or deliberately runs without it.
+`tests/test_worker_memory_lifecycle.py` verifies the prompt boundary and the
+retrieval, injection, and reflection event order. This is a focused plumbing
+control, not the required M3 suite: it uses a synthetic model control and does
+not report a comparable multi-case completion-rate dataset.
+
+The remaining M3 run requires Role D to expose a memory-enabled evaluation
+entry point. `harness/runner.py` currently rejects configurations with either
+`memory_enabled` or `write_memory` enabled, so C must not alter the shared
+harness to manufacture a result. D's entry point needs to preserve isolated
+starting JSONL snapshots and emit the metrics and raw result paths listed above.
+
+For the Planner follow-up, C defines the reflection payload as: a concise goal
+digest, the selected task-graph summary, terminal goal verdict, failed or
+blocked dependency reasons, and reusable planning advice. It must be stored in
+the Planner's own `workspaces/planner/memory/planner.jsonl` stream and must not
+include raw private prompts or Worker-private records. Role A owns the required
+automatic retrieval before planning and terminal reflection after the goal;
+current Planner memory is only externally supplied `memory_context`.
+
+Issue #10's record-level attribution is also intentionally pending Role A's
+shared contract. The current `Memory.retrieve()` port returns `str` and
+`MemoryEvent` contains only length and hash metadata. After A introduces the
+agreed `RetrievedMemory{text, memory_ids}` value and adapts runtime injection,
+C can return only the identifiers of records that actually fit in the bounded
+context, including the empty-history case. Changing C alone would break the
+current A-owned port and runtime.
 
 ## 4.6 Current Limitations
 
