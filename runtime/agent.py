@@ -346,9 +346,14 @@ class AgentRuntime:
                 summary=str(exc),
             )
         except ModelCallError as exc:
+            session.tokens += exc.tokens
+            exhausted = session.tokens >= context.config.max_task_tokens
             return AgentOutcome(
                 kind="failed",
                 tokens=session.tokens,
-                failure_code=FailureCode.MODEL_ERROR,
-                summary=str(exc),
+                failure_code=(
+                    FailureCode.BUDGET_EXCEEDED if exhausted else FailureCode.MODEL_ERROR
+                ),
+                retryable=not exhausted,
+                summary="Agent exceeded its token budget" if exhausted else str(exc),
             )

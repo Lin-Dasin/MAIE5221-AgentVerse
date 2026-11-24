@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from typing import Literal
 from urllib.parse import urlparse
@@ -10,9 +11,36 @@ import httpx
 
 from protocol.models import ChatMessage, ModelResponse, ToolCall, ToolDefinition
 
+logger = logging.getLogger(__name__)
+UsageSource = Literal["provider", "estimated"]
+
 
 class ModelCallError(RuntimeError):
-    pass
+    def __init__(
+        self, message: str, *, tokens: int = 0, usage_source: UsageSource | None = None
+    ):
+        super().__init__(message)
+        self.tokens = tokens
+        self.usage_source = usage_source
+
+
+def _account_usage(body: object, payload: dict) -> tuple[int, UsageSource]:
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if isinstance(usage, dict):
+        total = usage.get("total_tokens")
+        if type(total) is int and total > 0:
+            return total, "provider"
+        prompt, completion = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        if type(prompt) is int and prompt > 0 and type(completion) is int and completion >= 0:
+            return prompt + completion, "provider"
+    # Reserve the entire output allowance and use UTF-8 bytes plus framing as
+    # a conservative prompt estimate. This is budget accounting, not billing.
+    messages, tools = payload["messages"], payload.get("tools", [])
+    wire = json.dumps({"messages": messages, "tools": tools}, separators=(",", ":"))
+    estimate = len(wire.encode("utf-8")) + 16 * (len(messages) + len(tools))
+    estimate += payload["max_tokens"]
+    logger.warning("DeepSeek response has no valid usage; charging estimated tokens: %d", estimate)
+    return estimate, "estimated"
 
 
 class DeepSeekClient:
@@ -50,7 +78,9 @@ class DeepSeekClient:
         self.model = model
         self.max_retries = max_retries
         self.thinking = thinking
-        self.http = httpx.AsyncClient(timeout=timeout_sec, transport=transport)
+        self.http = httpx.AsyncClient(
+            timeout=timeout_sec, transport=transport, trust_env=False
+        )
 
     @classmethod
     def from_environment(cls) -> "DeepSeekClient":
@@ -127,9 +157,21 @@ class DeepSeekClient:
                 if response.status_code == 200:
                     try:
                         body = response.json()
+                    except ValueError:
+                        body = None
+                    tokens, source = _account_usage(body, payload)
+                    try:
+                        if not isinstance(body, dict):
+                            raise ValueError("Expected an object")
                         choice = body["choices"][0]
+                        if not isinstance(choice, dict):
+                            raise ValueError("Expected a choice object")
                         if choice.get("finish_reason") == "length":
-                            raise ModelCallError("Model output exceeded the response limit")
+                            raise ModelCallError(
+                                "Model output exceeded the response limit",
+                                tokens=tokens,
+                                usage_source=source,
+                            )
                         message = choice["message"]
                         return ModelResponse(
                             content=message.get("content") or "",
@@ -142,10 +184,15 @@ class DeepSeekClient:
                                 )
                                 for call in message.get("tool_calls") or []
                             ],
-                            tokens=body.get("usage", {}).get("total_tokens", 0),
+                            tokens=tokens,
+                            usage_source=source,
                         )
                     except (KeyError, IndexError, TypeError, ValueError) as exc:
-                        raise ModelCallError("Model returned an invalid response envelope") from exc
+                        raise ModelCallError(
+                            "Model returned an invalid response envelope",
+                            tokens=tokens,
+                            usage_source=source,
+                        ) from exc
                 if response.status_code != 429 and response.status_code < 500:
                     raise ModelCallError(f"Model request returned HTTP {response.status_code}")
                 if attempt == self.max_retries:

@@ -331,6 +331,7 @@ class ModelResponse(Contract):
     content: str = ""
     tool_calls: list[ToolCall] = Field(default_factory=list)
     tokens: int = Field(default=0, ge=0)
+    usage_source: Literal["provider", "estimated"] | None = None
     reasoning_content: str | None = Field(default=None, repr=False)
 
 
