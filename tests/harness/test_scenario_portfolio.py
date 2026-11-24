@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from harness.scenario_portfolio import ALLOCATION_ARTIFACT, PROPOSAL_ARTIFACT, check_portfolio
+from harness.scenario_portfolio import (
+    ALLOCATION_ARTIFACT,
+    PROPOSAL_ARTIFACT,
+    SUMMARY_PLACEHOLDER,
+    attach_allocation_summary,
+    check_portfolio,
+)
 
 ALLOCATION = {
     "positions": [
@@ -56,6 +62,100 @@ def _write(tmp_path, *, allocation=ALLOCATION, proposal=PROPOSAL):
 
 def test_verified_proposal_preserves_decimal_stress_and_allows_formatted_values(tmp_path):
     _write(tmp_path)
+
+    assert check_portfolio(tmp_path) == []
+
+
+def test_placeholder_renders_valid_ledger_totals_and_exact_fractional_stress(tmp_path):
+    draft = f"# Simulated portfolio\r\n\r\n{SUMMARY_PLACEHOLDER}\r\n\r\nClient rationale."
+    _write(tmp_path, proposal=draft)
+    rendered = attach_allocation_summary(tmp_path, draft)
+
+    assert rendered.startswith("# Simulated portfolio\r\n\r\n<!-- allocation-summary:start -->")
+    assert rendered.endswith("<!-- allocation-summary:end -->\r\n\r\nClient rationale.")
+    assert "\n" not in rendered.replace("\r\n", "")
+    assert "| Total equity | 75.01% | 750,100 |" in rendered
+    assert "| Stress loss | — | 250,008.33 |" in rendered
+    assert "| Stress remaining | — | 749,991.67 |" in rendered
+    assert attach_allocation_summary(tmp_path, rendered) == rendered
+    (tmp_path / PROPOSAL_ARTIFACT).write_text(rendered, encoding="utf-8")
+    assert check_portfolio(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        f"Write the marker {SUMMARY_PLACEHOLDER} below.",
+        f"```markdown\n{SUMMARY_PLACEHOLDER}\n```",
+        f"{SUMMARY_PLACEHOLDER}\n\n{SUMMARY_PLACEHOLDER}",
+        PROPOSAL + "\n" + SUMMARY_PLACEHOLDER,
+        PROPOSAL + "\n" + PROPOSAL,
+        f"```markdown\n{PROPOSAL}\n```",
+        f"<div hidden>\n{PROPOSAL}\n</div>",
+        f"<!-- Example for author:\n{PROPOSAL}\n-->",
+        PROPOSAL.replace("| Stress loss |", "Review these assumptions.\n| Stress loss |"),
+        PROPOSAL.replace("250,008.33", "see risk memo"),
+        PROPOSAL.replace("Stress loss", "Stress remaining"),
+        PROPOSAL.replace("<!-- allocation-summary:end -->", ""),
+    ],
+)
+def test_rendering_preserves_ambiguous_hidden_or_invalid_sections(tmp_path, draft):
+    _write(tmp_path)
+    assert attach_allocation_summary(tmp_path, draft) == draft
+
+
+def test_stale_marked_numeric_summary_is_refreshed_without_rewriting_surrounding_prose(tmp_path):
+    original = PROPOSAL.replace("250,008.33", "250,000") + "\nClient note: keep this sentence.\n"
+    _write(tmp_path, proposal=original)
+    assert check_portfolio(tmp_path)
+    rendered = attach_allocation_summary(tmp_path, original)
+    start, end = "<!-- allocation-summary:start -->", "<!-- allocation-summary:end -->"
+    assert rendered.split(start)[0] == original.split(start)[0]
+    assert rendered.split(end)[1] == original.split(end)[1]
+    assert "| Stress loss | — | 250,008.33 |" in rendered
+    assert attach_allocation_summary(tmp_path, rendered) == rendered
+    (tmp_path / PROPOSAL_ARTIFACT).write_text(rendered, encoding="utf-8")
+    assert check_portfolio(tmp_path) == []
+
+
+def test_missing_malformed_and_inconsistent_ledgers_leave_placeholder_for_review(tmp_path):
+    draft = f"# Allocation\n\n{SUMMARY_PLACEHOLDER}"
+    assert attach_allocation_summary(tmp_path, draft) == draft
+    _write(tmp_path, allocation=dict(ALLOCATION, positions=ALLOCATION["positions"][:1]))
+    assert attach_allocation_summary(tmp_path, draft) == draft
+    (tmp_path / ALLOCATION_ARTIFACT).write_text('{"positions":', encoding="utf-8")
+    assert attach_allocation_summary(tmp_path, draft) == draft
+
+
+@pytest.mark.parametrize(
+    "asset",
+    ["US small-cap / total-market ex-large-cap ETF (satellite)", "U.S. equity index fund"],
+)
+def test_explicit_us_holding_cannot_be_counted_as_other_equity(tmp_path, asset):
+    positions = list(ALLOCATION["positions"])
+    positions[1] = dict(positions[1], asset=asset)
+    _write(tmp_path, allocation=dict(ALLOCATION, positions=positions))
+
+    assert check_portfolio(tmp_path) == [
+        f"Position 2 ({asset}) names US stock exposure. "
+        "Use us_equity for that holding and update the proposal's class totals."
+    ]
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        "VEA",
+        "Global ex-US equity ETF",
+        "US-listed Japan equity ETF",
+        "US stock exchange listed Japan fund",
+        "US small-cap and international equity blend",
+    ],
+)
+def test_other_equity_allows_ambiguous_or_non_us_exposure(tmp_path, asset):
+    positions = list(ALLOCATION["positions"])
+    positions[1] = dict(positions[1], asset=asset)
+    _write(tmp_path, allocation=dict(ALLOCATION, positions=positions))
 
     assert check_portfolio(tmp_path) == []
 

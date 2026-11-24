@@ -50,7 +50,7 @@ def _table_cells(line: str) -> list[str]:
     return [cell.strip() for cell in row.split("|")]
 
 
-def _visible_lines(markdown: str) -> list[str]:
+def visible_markdown_lines(markdown: str) -> list[str]:
     lines = []
     fence = ""
     for line in markdown.splitlines():
@@ -69,7 +69,7 @@ def _visible_lines(markdown: str) -> list[str]:
 
 def source_pair_defects(markdown: str) -> list[str]:
     """Check the official URLs and exact facts in one two-column Markdown table."""
-    lines = _visible_lines(markdown)
+    lines = visible_markdown_lines(markdown)
     cells = [_table_cells(line) for line in lines]
     headers = []
     for index, (header, separator) in enumerate(zip(cells, cells[1:], strict=False)):

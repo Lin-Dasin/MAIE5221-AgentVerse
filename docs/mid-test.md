@@ -88,41 +88,70 @@ The export includes `transcript.md`, `manifest.json` and portable copies under
 accepted artifacts and whitelisted coordination metadata. Keep raw tool
 arguments, results, private conversations and diagnosis in internal records.
 
-## Run Task 1 with automated rework
+## Run with automated rework
 
-The newsroom and fund scenarios support `--managed` for Task 1 in a checkout
-containing Role A's delivery runner and Role C's scenario policies. The other
-tasks use the open discussion commands above. Managed mode defaults to one
-initial round and up to two rework rounds. The limit flags still apply. A new
-instructor message pauses managed execution for review of the changed plan.
+Managed mode supports both tasks in all three scenarios in a checkout
+containing Role A's delivery runner and Role C's scenario policies. It defaults
+to one initial round and up to two rework rounds. It sends failed checks back
+to the responsible agents and checks their revised files again. A new
+instructor message pauses execution for review of the changed goal.
 
 ```powershell
-python -m ui.cli mid-test run $session 1 --profiles-dir profiles/scenarios --managed
+python -m ui.cli mid-test run $session 1 --profiles-dir profiles/scenarios --managed --max-task-tokens 240000 --max-output-tokens 8192
 ```
 
-- **Newsroom:** the reporter writes `event-evidence.json` for an event from the last 120 days using
-  an official HKUST source excerpt from the reporter's own Tavily results in this
-  run. The editor produces `hkust-news.md` using that evidence. Missing or
-  contradictory evidence goes back to the reporter. If the article depends on
-  invalid evidence, the editor also revises it after receiving the new evidence.
-- **Fund:** the fund manager writes `allocation.json` and
-  `investment-proposal.md`. The checker recalculates position weights, HKD
-  amounts, class subtotals and the stock-only stress scenario, and compares them
-  with the proposal's required summary table.
+- **Software:** the developer writes the booking application and guide in Task
+  1, then the dashboard and guide in Task 2. Start Docker and make the sandbox
+  image available before running either task. The verifier seeds real bookings
+  and cancellations through the booking HTTP API. For Task 2 it uses the
+  accepted Task 1 application and checks the same SQLite data, including minutes
+  of occupancy across two-hour bands. The developer receives failures for both
+  program behavior and usage instructions. It retains a verified program
+  during guide-only repairs and checks that the documented servers use
+  distinct ports.
+- **Newsroom:** in Task 1, the reporter writes `event-evidence.json` using the
+  reference ID and exact URL of their own official HKUST search result. The
+  verifier checks that the event actually occurred within the date range
+  shown in the delivery instructions. The editor receives the checked event
+  details, including the full occurrence range, for `hkust-news.md`. In Task
+  2, the system starts a scholarly search for the fact-checker and records
+  source IDs. The fact-checker writes `detector-evidence.json`, and the editor
+  writes `ai-detector-fact-check.md` with a supported verdict, both kinds of
+  errors and remaining uncertainty. The system formats the verified claims
+  and citations when the editor saves the article. A percentage must retain
+  the metric and study population in its recorded passage, and the article
+  must keep it with the complete checked claim. A source failure goes to the
+  evidence owner first.
+- **Fund:** the researcher writes `research-evidence.json` in each task using
+  direct URLs and reference IDs from their own Tavily results. The runner uses
+  the original result excerpts to check the dated claims and cited figures. The
+  fund manager uses the checked research in the proposal. When the proposal uses
+  the allocation-summary placeholder, the system renders the weights, amounts,
+  and stress figures from the validated allocation ledger. In Task 2, Marketing
+  uses the research in
+  `semiconductor-outlook.html` and uses a current outlook with a verifiable
+  publication date or named release edition. Missing or inconsistent evidence
+  goes back to Research first, and the corresponding author can then update
+  the citations.
+
+Researchers can reread the current task's results in
+`inputs/recorded-search-results.json`. When the submitted URL exactly matches
+one recorded in the task, the runner can recover the correct source ID from
+that record. The claim still has to pass the task's evidence checks.
 
 The run records per-requirement defects, artifact hashes and rework attempts in
-`discussion-summary.json`. Once the automated checks pass, review the complete
-candidate set for factual and editorial quality. Accept both files from the same
-attempt using repeated `--artifact` options. For example, in the newsroom run:
+`discussion-summary.json`. The operator's role is final acceptance. Once the
+automated checks pass, review the complete candidate set and accept its files
+from the same attempt using repeated `--artifact` options.
 
 ```powershell
 python -m ui.cli mid-test accept $session 1 --attempt '<task-1-run-id>' --artifact 'outputs/reporter/event-evidence.json' --artifact 'outputs/editor/hkust-news.md'
 ```
 
-Automated checks cover the recorded source excerpt, required article elements,
-and the allocation arithmetic. Full-source verification and unstructured prose
-still need final review. After acceptance, run Task 2 in the same session using
-the open mode.
+The final review covers browser behavior, full-source verification and prose.
+If a candidate needs correction, have the system generate a new reviewable
+attempt and preserve its hashes for acceptance. After accepting Task 1, run
+Task 2 in the same session. Use `--managed` again for automatic rework.
 
 ## Check the deliverables
 

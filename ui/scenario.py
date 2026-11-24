@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
     run.add_argument("--max-task-tokens", type=int, default=60000)
     run.add_argument("--max-output-tokens", type=int, default=2048)
     run.add_argument(
-        "--managed", action="store_true", help="Run automated rework for newsroom or fund Task 1"
+        "--managed", action="store_true", help="Run automated checks and owner-directed rework"
     )
     run.add_argument(
         "--max-rework-rounds", type=int, choices=range(4), help="Managed mode, default: 2"

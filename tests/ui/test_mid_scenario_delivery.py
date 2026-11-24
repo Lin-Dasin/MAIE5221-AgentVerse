@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from harness import scenario_newsroom, scenario_newsroom_factcheck
 from protocol.models import ModelResponse, ToolCall, ToolResult
 from tools import web_search
 from ui import scenario, scenario_engine
@@ -121,7 +122,7 @@ class _NewsroomModel:
         write("editor", ARTICLE, _article(old))
 
         tool("reporter", "web_search", query="recent campus AI event")
-        write("reporter", EVIDENCE, json.dumps(current))
+        write("reporter", EVIDENCE, json.dumps(_reference_evidence(current)))
         tool("editor", "file_read", path=REPORTER_INPUT)
         write("editor", ARTICLE, _article(current if repair_article else old))
 
@@ -142,7 +143,8 @@ class _NewsroomModel:
             self.contract_errors.append((role, "original instructor message missing"))
         if "Rework attempt: 1/1" in prompt and role not in self.repair_roles:
             self.repair_roles.append(role)
-        if offered - set(ROLES[role]):
+        allowed = set(ROLES[role]) | ({"file_read"} if role == "reporter" else set())
+        if offered - allowed:
             self.contract_errors.append((role, offered))
         for call in response.tool_calls:
             if call.name not in offered:
@@ -159,6 +161,12 @@ class _NewsroomModel:
         return response
 
 
+def _reference_evidence(event):
+    return {key: value for key, value in event.items() if key != "source_quote"} | {
+        "source_ref": "R2"
+    }
+
+
 @pytest.mark.parametrize("repair_article", [True, False])
 async def test_managed_newsroom_rechecks_report_against_repaired_source(
     tmp_path, monkeypatch, repair_article
@@ -172,7 +180,7 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
 
     async def fetch(query, **kwargs):
         queries.append(query)
-        event = old if query == "older campus AI event" else current
+        event = old if query == scenario_newsroom.initial_event_search(date.today()) else current
         return [
             {
                 "url": event["source_url"],
@@ -198,8 +206,11 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
     assert not model.contract_errors
     assert not model.steps
     assert model.repair_roles == ["reporter", "editor"]
-    assert queries == ["older campus AI event", "recent campus AI event"]
-    assert model.editor_reads == [old, current]
+    assert queries == [
+        scenario_newsroom.initial_event_search(date.today()),
+        "recent campus AI event",
+    ]
+    assert model.editor_reads == [old, _reference_evidence(current)]
 
     task_dir = session / "tasks/task-1"
     (attempt,) = (task_dir / "attempts").iterdir()
@@ -222,8 +233,12 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
         assert summary["candidates"] == {
             path: scenario.file_sha256(attempt / path) for path in outputs
         }
-        assert json.loads((attempt / STAGED_EVIDENCE).read_bytes()) == current
+        assert json.loads((attempt / STAGED_EVIDENCE).read_bytes()) == _reference_evidence(current)
         assert (attempt / STAGED_ARTICLE).read_text(encoding="utf-8") == _article(current)
+        handoff = attempt / "workspaces/editor/inputs/shared/reporter/verified-event.json"
+        checked = json.loads(handoff.read_bytes())
+        assert checked["event_start"] == checked["event_end"] == current["event_date"]
+        assert checked["source_url"] == current["source_url"]
         with pytest.raises(ValueError, match="full managed candidate set"):
             scenario.accept_attempt(session, 1, attempt.name, (STAGED_ARTICLE,))
         with pytest.raises(ValueError, match="distinct"):
@@ -245,3 +260,120 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
         assert not summary["candidates"]
         with pytest.raises(ValueError):
             scenario.accept_attempt(session, 1, attempt.name, outputs)
+
+
+async def test_managed_fact_check_repairs_evidence_before_editor_and_waits_for_acceptance(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("orchestrator.delivery")
+    from ui.scenario_delivery import managed_discussion_engine
+
+    session, profiles = _prepare_newsroom(tmp_path)
+    evidence_artifact = scenario_newsroom_factcheck.EVIDENCE_ARTIFACT
+    article_artifact = scenario_newsroom_factcheck.ARTICLE_ARTIFACT
+
+    async def first_task(request, human, emit):
+        path = request.workspace / STAGED_ARTICLE
+        path.parent.mkdir()
+        path.write_text("Previously reviewed event article.", encoding="utf-8")
+        return (STAGED_ARTICLE,)
+
+    await scenario.run_task(session, 1, profiles, first_task)
+    url = "https://journals.example.org/research/detector-evaluation"
+    statement = "The evaluation found false positives and false negatives in AI-writing detectors."
+    evidence = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim": statement,
+                    "source_url": url,
+                    "source_ref": "R1",
+                    "source_date": None,
+                }
+            ]
+        }
+    )
+    article = (
+        "Verdict: A detector score cannot reliably determine authorship by itself.\n\n"
+        f"{statement} [Evaluation]({url})\n\n"
+        "False positives flag human writing. False negatives miss generated writing. "
+        "The error rates vary by tool, language and sample. Students can retain drafts. "
+        "Faculty should review context and ask about the writing process."
+    )
+    replies = deque()
+
+    def tool(role, name, **arguments):
+        replies.append(
+            (
+                role,
+                ModelResponse(
+                    tool_calls=[
+                        ToolCall(call_id=f"{name}-{len(replies)}", name=name, arguments=arguments)
+                    ],
+                    tokens=50,
+                ),
+            )
+        )
+
+    def write(role, path, text):
+        tool(role, "file_write", path=path, text=text)
+        replies.append((role, ModelResponse(content="File saved.", tokens=50)))
+
+    write("chief_editor", "outputs/desk.md", "Choose published detector evaluations.")
+    write("reporter", "outputs/leads.md", "Report the limitations of the evidence.")
+    tool("fact_checker", "web_search", query="first query")
+    write("fact_checker", evidence_artifact, evidence)
+    write("editor", article_artifact, "Verdict: The evidence needs checking.")
+    tool("fact_checker", "web_search", query="repair query")
+    write("fact_checker", evidence_artifact, evidence)
+    tool("editor", "file_read", path="inputs/shared/fact_checker/detector-evidence.json")
+    write("editor", article_artifact, article)
+
+    async def fetch(query, **kwargs):
+        if query in {scenario_newsroom_factcheck.INITIAL_SEARCH, "first query"}:
+            return []
+        return [{"url": url, "title": "AI-writing detector evaluation", "content": statement}]
+
+    monkeypatch.setenv("SEARCH_API_KEY", "fixture")
+    monkeypatch.setattr(web_search, "fetch_tavily", fetch)
+    repaired = []
+
+    class Model:
+        async def complete(self, messages, tools, *, max_tokens):
+            role, response = replies.popleft()
+            prompt = messages[0].content
+            assert f"You are {role}." in prompt
+            if "Rework attempt: 1/1" in prompt and role not in repaired:
+                repaired.append(role)
+            if (
+                role == "editor"
+                and "Rework attempt: 1/1" in prompt
+                and any(call.name == "file_write" for call in response.tool_calls)
+            ):
+                result = next(message for message in messages if message.role == "tool")
+                assert ToolResult.model_validate_json(result.content).data["text"] == evidence
+            return response
+
+    engine = managed_discussion_engine(
+        Model(),
+        scenario_id="scenario-2-newsroom",
+        number=2,
+        max_task_tokens=180_000,
+        max_rework_rounds=1,
+    )
+    assert await scenario.run_task(session, 2, profiles, engine) is None
+    assert not replies and repaired == ["fact_checker", "editor"]
+    task = session / "tasks/task-2"
+    (attempt,) = (task / "attempts").iterdir()
+    summary = json.loads((attempt / "discussion-summary.json").read_bytes())
+    assert summary["status"] == "passed"
+    assert summary["search_evidence"] == {
+        "owner": "fact_checker",
+        "calls": 3,
+        "calls_with_results": 1,
+    }
+    assert not (task / "accepted").exists()
+    accepted = scenario.accept_attempt(session, 2, attempt.name, tuple(summary["candidates"]))
+    delivered = (accepted / "editor/ai-detector-fact-check.md").read_text("utf-8")
+    assert delivered.startswith(article)
+    assert "## Checked evidence" in delivered and f"[Source]({url})" in delivered
