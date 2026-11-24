@@ -109,6 +109,23 @@ retrieval, injection, and reflection event order. This is a focused plumbing
 control, not the required M3 suite: it uses a synthetic model control and does
 not report a comparable multi-case completion-rate dataset.
 
+`scripts/memory_ab.py` now provides a reproducible C-side fallback while D's
+harness remains memory-disabled. It runs three recurring fixed graphs with an
+identical frozen private JSONL snapshot per case, fixed tool set, deterministic
+fixture model, acceptance rule, and token limits. Both groups use
+`write_memory=false`; only `memory_enabled` changes. The script writes each raw
+`RunResult` and an `evaluation.json` with goal/subtask completion, tokens,
+duration, failure reasons, configurations, and snapshot hashes:
+
+```bash
+python -m scripts.memory_ab --work-dir results/m3-synthetic
+```
+
+This control is explicitly synthetic: the fixture can recover its required
+marker only from injected memory, so its expected memory-on/off difference proves
+the mechanism and measurement path, not a performance gain for a live model.
+Any final M3 claim must instead use D's standardized task suite and raw traces.
+
 The remaining M3 run requires Role D to expose a memory-enabled evaluation
 entry point. `harness/runner.py` currently rejects configurations with either
 `memory_enabled` or `write_memory` enabled, so C must not alter the shared
