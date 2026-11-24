@@ -27,9 +27,11 @@ Implemented:
 - Typed integration ports, editable package installation, CI dependency installation,
   and offline tests including a synthetic goal-to-artifact workflow.
 
-The repository includes B's file/search/host Python/Git tools, C's profiles and JSONL
-memory, and D's file verdicts, JSONL traces and offline harness. Remaining gaps
-include containers, hosted Git evaluation, full conversational routing and live evaluation.
+The repository includes B's file/search/Python/Git tools, C's profiles and JSONL
+memory, and D's CLI, file verdicts, traces and evaluation harness. B's Docker code
+backend starts one short-lived container per call and mounts the assigned workspace.
+It differs from the team's planned always-running container per agent. Hosted Git
+and formal course evaluation are separate from the local controls.
 The 2026-11-11 regressions use mocked HTTP, including a smoke-script workflow with
 real file/trace/verifier adapters; no new live-provider result is claimed. The
 client does not implement HKGAI. Container isolation remains B's responsibility;
@@ -277,10 +279,11 @@ for credentialed reproduction. This evidence does not measure M3 effectiveness.
 
 ## Remaining lifecycle contracts
 
-The current verifier is D's deterministic acceptance component, not a completed
-Critic Agent. A/C still own automatic Planner memory and the Critic Agent's
-runtime/memory lifecycle. Worker memory hooks do not complete the requirement for
-all individual Agents.
+D's deterministic verifier checks the declared rules and returns a defect list.
+The scheduler uses those defects for bounded Worker retries. The `critic`
+profile value is reserved and does not start an independent Agent.
+A separate Critic and its memory lifecycle remain design decisions for the team.
+Automatic Planner memory also remains integration work.
 
 D's Observer adapter handles task events. Chat input/session routing and Agent
 replies need additional A/D integration; per-model/per-tool traces need D's
