@@ -6,8 +6,9 @@ import httpx
 import pytest
 
 from orchestrator.approvals import PolicyApprover
+from orchestrator.planner import Planner, PlanningError
 from orchestrator.scheduler import Scheduler
-from protocol.models import ChatMessage, TaskStatus
+from protocol.models import ChatMessage, FailureCode, TaskStatus
 from runtime.agent import AgentRuntime
 from runtime.client import DeepSeekClient, ModelCallError
 from tests.helpers import FixtureTools, StubVerifier, config, graph, profile, task
@@ -92,6 +93,8 @@ async def test_reasoning_survives_tool_approval_and_multi_turn_replay(tmp_path, 
 
 @pytest.mark.parametrize("mode", [None, "enabled", "disabled"])
 async def test_environment_selects_validated_thinking_mode(monkeypatch, mode):
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,[::1],::1")
+    monkeypatch.delenv("no_proxy", raising=False)
     for key, value in {
         "LLM_BASE_URL": "https://api.deepseek.com",
         "LLM_API_KEY": "synthetic-test-key",
@@ -160,3 +163,108 @@ async def test_invalid_provider_envelope_is_a_model_error(message):
             await client.complete([ChatMessage(role="user", content="test")], [], max_tokens=50)
     finally:
         await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        ({"total_tokens": 20}, 20),
+        ({"prompt_tokens": 12, "completion_tokens": 3}, 15),
+        (None, None),
+        ({"total_tokens": True, "prompt_tokens": 12}, None),
+        ({"total_tokens": 0, "prompt_tokens": -2, "completion_tokens": 0}, None),
+    ],
+)
+async def test_usage_accounting(usage, expected, caplog):
+    def handler(_request):
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "done"}}], "usage": usage}
+        )
+
+    client = client_for(handler)
+    try:
+        result = await client.complete(
+            [ChatMessage(role="user", content="hello")], [], max_tokens=32
+        )
+    finally:
+        await client.aclose()
+    if expected is None:
+        assert result.usage_source == "estimated"
+        assert result.tokens > 32
+        assert "charging estimated tokens" in caplog.text
+    else:
+        assert result.usage_source == "provider"
+        assert result.tokens == expected
+
+
+async def test_missing_usage_counts_against_real_planner_budget():
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = client_for(handler)
+    try:
+        planner = Planner(client, profile("planner", role="planner"))
+        with pytest.raises(PlanningError, match="token budget"):
+            await planner.plan("Write a report", [profile()], config(max_task_tokens=500))
+    finally:
+        await client.aclose()
+    assert calls == 1
+
+
+async def test_truncated_worker_responses_debit_budget_across_attempts(tmp_path):
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200, json={"choices": [{"finish_reason": "length"}], "usage": {"total_tokens": 60}}
+        )
+
+    client = client_for(handler)
+    worker = AgentRuntime(client, FixtureTools(tmp_path), {"writer": profile()}, [])
+    try:
+        result = await Scheduler(worker, StubVerifier(), PolicyApprover(), root=tmp_path).run(
+            graph(task(max_retries=3)), config(max_task_tokens=100)
+        )
+    finally:
+        await client.aclose()
+    assert calls == 2
+    assert result.tasks[0].tokens == 120
+    assert result.tasks[0].failure_code == FailureCode.BUDGET_EXCEEDED
+
+async def test_missing_usage_blocks_worker_tool_when_estimated_budget_is_exhausted(tmp_path):
+    calls = 0
+
+    def handler(_request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"tool_calls": [{
+                "id": "late-write",
+                "function": {
+                    "name": "file_write",
+                    "arguments": '{"path":"outputs/t1.md","text":"must not run"}',
+                },
+            }]}}]},
+        )
+
+    client = client_for(handler)
+    worker = AgentRuntime(
+        client, FixtureTools(tmp_path), {"writer": profile(tools=["file_write"])}, [write_tool()]
+    )
+    try:
+        result = await Scheduler(worker, StubVerifier(), PolicyApprover(), root=tmp_path).run(
+            graph(task(max_retries=3)), config(max_task_tokens=100)
+        )
+    finally:
+        await client.aclose()
+    assert calls == 1
+    assert result.tasks[0].failure_code == FailureCode.BUDGET_EXCEEDED
+    assert result.tasks[0].tokens > 100
+    assert not (tmp_path / "workspaces/writer/outputs/t1.md").exists()

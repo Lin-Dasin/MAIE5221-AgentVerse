@@ -70,6 +70,13 @@ Before real calls, D's application must load a local `.env` or read exported `LL
 
 ### Shared Model Client and Live Smoke Test
 
+The DeepSeek client does not inherit proxy or CA configuration from the host
+environment. The budget uses valid provider usage when available. If a successful
+HTTP response lacks valid usage, the client logs a metadata-only warning and
+conservatively charges the serialized prompt size plus the full response
+allowance. Estimated charges are not billing data. Responses truncated by the
+provider still count toward the Planner or Worker budget.
+
 `DeepSeekClient(..., thinking="disabled")` is the default. The environment factory
 reads `LLM_THINKING=disabled|enabled`; any other value fails before a request.
 Every request sends the chosen mode explicitly. `ChatMessage` and `ModelResponse`
@@ -123,7 +130,7 @@ The record-retrieval and context-building functions previously described in C's 
 | --- | --- | --- |
 | B | `async execute(call: ToolCall, context: ExecutionContext) -> ToolResult` | Execute a concrete tool; return an explicit error on failure |
 | B | Supply `list[ToolDefinition]` | Tool names, descriptions, parameter JSON schemas and approval requirements |
-| C | `async retrieve(agent_id: str, task: Task) -> str` | Prepared private memory ready for prompt injection; empty string when no records exist |
+| C | `async retrieve(agent_id: str, task: Task) -> RetrievedMemory` | Private prompt text and opaque IDs for the records included; both empty on a miss |
 | C | `async reflect(task: Task, result: TaskResult) -> None` | Persist experience for `result.agent_id`; the optional verdict is in `result.critique` |
 | D | `async check(rules: list[AcceptanceRule], root: Path) -> CriticResult` | Perform real acceptance checks; counts must be consistent with the verdict |
 | D | Implement all five async `Observer` callbacks | Plan completion, task status, delegation, file handoffs and approval decisions |
@@ -172,9 +179,13 @@ gets a diagnostic and at most two repairs per generation (three attempts total),
 `max_planning_calls` and the token budget. Dataset rules are never silently
 rewritten or weakened. Unsupported externally supplied goal rules fail before a
 model call. `run_goal()` returns a failure record and retains useful plan-error
-details; `run_graph()` raises for invalid contracts before leasing a workspace or
-calling a Worker. Dynamic children are checked before insertion and parent
-suspension; a bad request fails the parent with `invalid_output`.
+details. At the service boundary both entry points return a `RunResult` for
+graph execution failures. Invalid contracts return `invalid_output` before the
+scheduler leases a workspace or calls a Worker. The provided graph is retained
+with no invented task results; the harness can report those nodes as unreported.
+Execution timeouts return `timeout`, and cancellation still propagates.
+Dynamic children are checked before insertion and parent suspension; a bad
+request fails the parent with `invalid_output`.
 
 The optional `build_service(supported_acceptance_types=...)` argument defaults to
 `{"file_exists", "text_contains"}`, matching D's current `FileVerifier`. It is an
@@ -241,7 +252,7 @@ Mark operations requiring confirmation with `ToolDefinition.requires_approval=Tr
 ### Initial Deliverables
 
 1. Implement an object conforming to `Memory`, using the same root as A/B.
-2. `retrieve()` performs reading, ranking, truncation and context assembly internally. Return a string, not a list of records.
+2. `retrieve()` performs reading, ranking, truncation and context assembly internally. Return `RetrievedMemory`; append an ID only once its record is included in the returned text.
 3. `reflect()` receives terminal results. A task may fail before verification or be blocked by an upstream failure, so `result.critique` may be `None` and `started_at` may also be absent.
 4. Supply `profiles/*.yaml` for the existing `load_profiles()` function.
 
@@ -275,8 +286,10 @@ Control the model, tasks, prompts, acceptance rules and budgets, and record both
 
 `build_service(memory=..., memory_observer=...)` accepts an optional
 `MemoryObserver` with `async memory_event(event: MemoryEvent)`. It is separate
-from the existing task `Observer` and does not change `Memory.retrieve()` or
-`Memory.reflect()`. One retrieval occurs when a new Worker attempt starts;
+from the existing task `Observer`. `JsonlTrace` records opaque IDs only for
+successful retrieval; IDs are never inserted into the model prompt. The Worker
+demo correlates the retrieved ID with its seed reflection. One retrieval occurs
+when a new Worker attempt starts;
 `injected` records the result of each model-client call carrying that context,
 including empty context, and `reflected` reports the terminal write. Disabled
 reads emit neither retrieval nor injection events. Writes are controlled

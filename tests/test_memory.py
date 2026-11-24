@@ -1,10 +1,18 @@
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from memory import JsonlMemory
-from protocol.models import AcceptanceRule, FailureCode, Task, TaskResult, TaskStatus
+from protocol.models import (
+    AcceptanceRule,
+    FailureCode,
+    RetrievedMemory,
+    Task,
+    TaskResult,
+    TaskStatus,
+)
 from runtime.profiles import load_profiles
 
 
@@ -46,8 +54,8 @@ async def test_reflect_and_retrieve_are_agent_isolated(tmp_path):
     task = make_task()
     await memory.reflect(task, make_result(task, status=TaskStatus.SUCCESS))
 
-    assert "Verified official source URLs" in await memory.retrieve("researcher", task)
-    assert await memory.retrieve("writer", task) == ""
+    assert "Verified official source URLs" in (await memory.retrieve("researcher", task)).text
+    assert await memory.retrieve("writer", task) == RetrievedMemory()
     assert memory.path_for("researcher").is_file()
     assert not memory.path_for("writer").exists()
 
@@ -59,7 +67,7 @@ async def test_failed_reflection_handles_missing_critique(tmp_path):
     failed = make_result(task, status=TaskStatus.FAILED, failure_code=FailureCode.TIMEOUT)
 
     await memory.reflect(task, failed)
-    text = await memory.retrieve("researcher", task)
+    text = (await memory.retrieve("researcher", task)).text
 
     assert "timeout" in text
     assert "Acceptance failed" in text
@@ -77,7 +85,7 @@ async def test_retrieval_skips_malformed_and_cross_agent_records(tmp_path):
         encoding="utf-8",
     )
 
-    assert await memory.retrieve("researcher", make_task()) == ""
+    assert await memory.retrieve("researcher", make_task()) == RetrievedMemory()
     assert len(memory.diagnostics) == 2
 
 
@@ -91,7 +99,7 @@ async def test_retrieval_is_bounded_to_three_records(tmp_path):
         current_result.summary = f"Pricing sources lesson {index}"
         await memory.reflect(current, current_result)
 
-    text = await memory.retrieve("researcher", task)
+    text = (await memory.retrieve("researcher", task)).text
     assert text.count("Previous success task") == 3
     assert len(text) <= 2400
 
@@ -111,7 +119,7 @@ async def test_chinese_query_ranks_the_related_private_reflection_first(tmp_path
         await memory.reflect(seed, result)
 
     query = make_task("invoice-query", title="重新核对发票总额")
-    text = await memory.retrieve("researcher", query)
+    text = (await memory.retrieve("researcher", query)).text
 
     assert "先逐项比对再四舍五入。" in text
     assert "签字前先还原一份样本。" not in text
@@ -126,3 +134,26 @@ def test_profiles_load_from_repository():
         "researcher",
         "writer",
     }
+
+
+async def test_retrieval_ids_match_text_after_character_limit(tmp_path):
+    memory = JsonlMemory(tmp_path, max_records=3)
+    query = make_task()
+    for index in range(2):
+        item = make_task(f"seed-{index}")
+        result = make_result(item, status=TaskStatus.SUCCESS)
+        result.summary = f"Pricing lesson exclusively numbered {index}"
+        await memory.reflect(item, result)
+    records = [
+        json.loads(line) for line in memory.path_for("researcher").read_text().splitlines()
+    ]
+    # Isolate one record's exact size using the public adapter, then apply that cap.
+    newest_only = await JsonlMemory(tmp_path, max_records=1).retrieve("researcher", query)
+    memory.max_context_chars = len(newest_only.text) + 1
+    trimmed = await memory.retrieve("researcher", query)
+    assert trimmed == newest_only
+    assert trimmed.memory_ids == [records[1]["memory_id"]]
+    assert records[1]["execution_summary"] in trimmed.text
+    assert records[0]["execution_summary"] not in trimmed.text
+    memory.max_context_chars = 1
+    assert await memory.retrieve("researcher", query) == RetrievedMemory()

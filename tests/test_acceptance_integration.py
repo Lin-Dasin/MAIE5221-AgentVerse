@@ -7,7 +7,6 @@ import pytest
 from harness.verdict import FileVerifier
 from orchestrator.approvals import PolicyApprover
 from orchestrator.bootstrap import build_service
-from orchestrator.preflight import PlanContractError
 from protocol.models import AcceptanceRule, FailureCode, ModelResponse, TaskStatus, ToolCall
 from sandbox.executor import SandboxToolExecutor
 from sandbox.test_runner import run_pytest
@@ -143,9 +142,10 @@ async def test_pytest_requires_explicit_capability_before_execution(
 ):
     model = ScriptedModel()
     verifier = FileVerifier(pytest_runner=run_pytest if configured_runner else None)
-    with pytest.raises(PlanContractError, match="unsupported"):
-        await service(tmp_path, model, verifier, advertise=advertise).run_graph(
-            code_graph(),
-            config(),
-        )
+    result = await service(tmp_path, model, verifier, advertise=advertise).run_graph(
+        code_graph(), config(),
+    )
+    assert result.failure_code == FailureCode.INVALID_OUTPUT
+    assert "unsupported" in result.failure_reason
+    assert result.tasks == []
     assert model.calls == [] and list(tmp_path.iterdir()) == []

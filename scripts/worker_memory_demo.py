@@ -27,7 +27,6 @@ from protocol.models import (
     AgentProfile,
     ChatMessage,
     FailureCode,
-    MemoryEvent,
     ModelResponse,
     RunConfig,
     Task,
@@ -41,17 +40,6 @@ from runtime.client import DeepSeekClient
 from runtime.memory_events import context_metadata
 from sandbox.executor import SandboxToolExecutor
 from tools.registry import build
-
-
-class MemoryDemoTrace(JsonlTrace):
-    """Example A-to-D hook adapter using D's existing JSONL event envelope.
-
-    Kept in this composition example; it does not change D's production observer
-    or define another trace format. D can adopt memory_event in its adapter.
-    """
-
-    async def memory_event(self, event: MemoryEvent) -> None:
-        self._append("memory_lifecycle", event.run_id, **event.model_dump(exclude={"run_id"}))
 
 
 class RequestAudit:
@@ -131,7 +119,7 @@ async def run_pair(
     # No read/search/code tools: the second Worker cannot inspect the first file.
     executor = SandboxToolExecutor(root, {"file_write": registry["file_write"]})
     memory = JsonlMemory(root, max_records=1)
-    trace = MemoryDemoTrace(root / TRACE_FILENAME)
+    trace = JsonlTrace(root / TRACE_FILENAME)
     audit = RequestAudit(client, marker)
     service = build_service(
         root=root,
@@ -227,6 +215,10 @@ async def run_pair(
         "sessions_released": not service.scheduler.worker.sessions,
     }
     if recall_enabled:
+        seed_ids = [r["memory_id"] for r in records if r["evidence_task_id"] == "seed"]
+        checks["recall_attributes_seed_record"] = (
+            len(seed_ids) == 1 and len(retrieved) == 1 and retrieved[0]["memory_ids"] == seed_ids
+        )
         checks["reflection_retrieval_injection_order"] = (
             first_reflection is not None
             and len(retrieved) == 1

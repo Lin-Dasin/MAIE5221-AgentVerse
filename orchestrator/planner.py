@@ -16,6 +16,7 @@ from protocol.models import (
     extract_json,
 )
 from protocol.ports import ModelClient
+from runtime.client import ModelCallError
 
 PLAN_GENERATION_ATTEMPTS = 3
 
@@ -58,12 +59,18 @@ class Planner:
             nonlocal calls, tokens
             if calls >= config.max_planning_calls or tokens >= config.max_task_tokens:
                 raise PlanningError("planning budget exhausted")
-            response = await self.model.complete(
-                messages,
-                [],
-                max_tokens=min(config.max_output_tokens, config.max_task_tokens - tokens),
-            )
             calls += 1
+            try:
+                response = await self.model.complete(
+                    messages,
+                    [],
+                    max_tokens=min(config.max_output_tokens, config.max_task_tokens - tokens),
+                )
+            except ModelCallError as exc:
+                tokens += exc.tokens
+                if tokens >= config.max_task_tokens:
+                    raise PlanningError("planning token budget exhausted") from exc
+                raise
             tokens += response.tokens
             if response.tool_calls or tokens > config.max_task_tokens:
                 raise PlanningError("planning returned tool calls or exceeded its token budget")
