@@ -172,9 +172,13 @@ gets a diagnostic and at most two repairs per generation (three attempts total),
 `max_planning_calls` and the token budget. Dataset rules are never silently
 rewritten or weakened. Unsupported externally supplied goal rules fail before a
 model call. `run_goal()` returns a failure record and retains useful plan-error
-details; `run_graph()` raises for invalid contracts before leasing a workspace or
-calling a Worker. Dynamic children are checked before insertion and parent
-suspension; a bad request fails the parent with `invalid_output`.
+details. At the service boundary both entry points return a `RunResult` for
+graph execution failures. Invalid contracts return `invalid_output` before the
+scheduler leases a workspace or calls a Worker. The provided graph is retained
+with no invented task results; the harness can report those nodes as unreported.
+Execution timeouts return `timeout`, and cancellation still propagates.
+Dynamic children are checked before insertion and parent suspension; a bad
+request fails the parent with `invalid_output`.
 
 The optional `build_service(supported_acceptance_types=...)` argument defaults to
 `{"file_exists", "text_contains"}`, matching D's current `FileVerifier`. It is an
