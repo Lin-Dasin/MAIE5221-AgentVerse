@@ -2,6 +2,25 @@
 
 This file records actual changes to documentation, contracts and the integration entry point. Day-to-day progress and code contributions are evidenced by genuine Git commits, PRs and tracking issues. This log does not imply that changes have already been committed, merged or approved by the team.
 
+## 2026-11-24 — PR #40 Integration with Current Develop
+
+- Rebased managed discussion/delivery on `develop` at `bd50639`, including
+  #35–#38. Resolved the client conflict while retaining #36's transport policy,
+  bounded retries, usage fallback, and Planner/Worker error accounting.
+- `ModelOutputLimitError` specializes the existing `ModelCallError` and carries
+  the same `tokens` and `usage_source`. One `_account_usage` path handles normal,
+  truncated and malformed responses. The discussion budget now honors usage
+  on all client errors; only truncation qualifies for bounded handoff recovery.
+- Guarded the unsafe-fingerprint test for unavailable symlink support or
+  privileges, including Windows error 1314; unexpected filesystem errors still
+  fail. The real symlink test passed locally and the simulated Windows case
+  skipped as intended. This is not a native Windows full-suite result.
+- Validation on the rebased branch: 504 tests passed with Docker and zero skips;
+  199 focused client/discussion/delivery/UI tests passed. Ruff and whitespace
+  checks passed. The standalone discussion API and existing CLI remain compatible.
+  See [integration validation](discussion-truncation-recovery.md#validation-on-2026-11-24)
+  for the regression scope. No new live-model Mid Test was run for this rebase.
+
 ## 2026-11-23 — Managed Delivery Allocation and Persisted Repair
 
 - Removed the second round reserve inside `DeliveryDiscussionRunner`'s managed

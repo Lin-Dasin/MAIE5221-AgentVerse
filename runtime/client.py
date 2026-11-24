@@ -46,10 +46,11 @@ def _account_usage(body: object, payload: dict) -> tuple[int, UsageSource]:
 class ModelOutputLimitError(ModelCallError):
     """A discarded truncated response, with usage retained for caller accounting."""
 
-    def __init__(self, tokens: int = 0, usage_source: UsageSource | None = None):
-        value = tokens if type(tokens) is int and tokens >= 0 else 0
+    def __init__(self, tokens: int = 0, *, usage_source: UsageSource | None = None):
         super().__init__(
-            "Model output exceeded the response limit", tokens=value, usage_source=usage_source
+            "Model output exceeded the response limit",
+            tokens=tokens,
+            usage_source=usage_source,
         )
 
 
@@ -177,7 +178,9 @@ class DeepSeekClient:
                         if not isinstance(choice, dict):
                             raise ValueError("Expected a choice object")
                         if choice.get("finish_reason") == "length":
-                            raise ModelOutputLimitError(tokens=tokens, usage_source=source)
+                            raise ModelOutputLimitError(
+                                tokens=tokens, usage_source=source
+                            )
                         message = choice["message"]
                         return ModelResponse(
                             content=message.get("content") or "",

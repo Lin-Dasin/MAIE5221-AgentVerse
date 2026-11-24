@@ -77,3 +77,48 @@ Raw calls, tools, reviews, artifacts, metrics and regression XML are preserved
 in `results/midtest-truncation-fix-2026-11-23/` (Git-ignored).
 The source manifest distinguishes the live probe from the final standalone
 compatibility guard, which did not change managed behavior.
+
+## Validation on 2026-11-24
+
+PR #40 was rebased on `develop` at `bd50639` after #35–#38 merged. The client
+retains #36's `trust_env=False`, bounded transient retries, provider usage
+validation and conservative fallback. There is one response accounting path:
+`_account_usage` computes `tokens` and `usage_source` before response validation.
+For `finish_reason=length`, `ModelOutputLimitError` passes both values to its
+existing `ModelCallError` base. Partial tool arguments are never parsed or run.
+Existing Planner/Worker handlers still catch the base error; discussion recovery
+catches the specific subtype. Other provider errors remain terminal.
+
+`DiscussionBudget` charges the usage carried by any `ModelCallError` exactly
+once, including malformed responses. If usage is unknown, it retains the
+reservation fallback. Handoff retry consumes the same task budget. The new
+HTTP-contract controls in `tests/test_discussion_client.py` exercise actual
+client parsing with simulated HTTP responses, shared budgeting and managed
+delivery; no external model requests are made.
+
+- [x] Full suite: `python -m pytest -q` — **504 passed**, zero skips, with Docker.
+- [x] Focused client/discussion/delivery/UI suite — **199 passed**.
+- [x] `python -m ruff check .` and `git diff --check` passed.
+- [x] Standalone discussion API: strict model round trips, ordered callbacks,
+  human polling and original stop behavior remain covered by `test_discussion`.
+- [x] Existing CLI compatibility: all `tests/ui` tests passed; the CLI and
+  bootstrap entry points are unchanged relative to this `develop` base.
+- [x] Truncation, malformed envelopes, total-token usage, component-token usage
+  and missing usage are covered without double charging or dispatching partial
+  tool calls. An HTTP-level truncation followed by a short report preserves the
+  saved artifact and totals 1,700 tokens across three calls.
+- [x] The fingerprint symlink test passes on this host. Injecting Windows
+  privilege error 1314 makes the same test skip; unrelated filesystem errors
+  are re-raised. This validates the guard, not an entire native Windows run.
+
+Reproduce the focused compatibility suite with:
+
+```bash
+python -m pytest -q tests/test_client.py tests/test_discussion_client.py \
+  tests/test_discussion.py tests/test_discussion_context.py \
+  tests/test_discussion_delivery.py tests/test_delivery_execution_policy.py \
+  tests/test_delivery_handoff.py tests/test_delivery_lifecycle.py tests/ui
+```
+
+These are integration/regression results, not a new live Mid Test or content
+acceptance score. Managed delivery remains opt-in.
