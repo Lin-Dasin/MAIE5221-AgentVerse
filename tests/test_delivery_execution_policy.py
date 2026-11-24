@@ -1,5 +1,7 @@
 """Behavioral controls for the Mid Test allocation and unsaved-repair regressions."""
 
+import errno
+
 import pytest
 
 from orchestrator.discussion import RoundRobinDiscussionEngine
@@ -194,7 +196,16 @@ async def test_unsafe_fingerprints_are_not_labeled_as_no_progress(tmp_path):
 
     root = tmp_path / "writer"
     root.mkdir()
-    (root / "outputs").symlink_to(tmp_path, target_is_directory=True)
+    try:
+        (root / "outputs").symlink_to(tmp_path, target_is_directory=True)
+    except NotImplementedError:
+        pytest.skip("symlink creation unavailable on this host")
+    except OSError as exc:
+        if exc.errno in {errno.EPERM, errno.EACCES, errno.ENOSYS, errno.ENOTSUP} or getattr(
+            exc, "winerror", None
+        ) == 1314:
+            pytest.skip("symlink creation unavailable or not permitted on this host")
+        raise
     plan = DeliveryPlan(goal="goal", requirements=[requirement()])
     assert delivery_fingerprints(plan, {"writer": root}) == {}
 

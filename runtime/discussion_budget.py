@@ -2,7 +2,7 @@
 
 from protocol.models import ChatMessage, ModelResponse, ToolDefinition
 from protocol.ports import ModelClient
-from runtime.client import ModelOutputLimitError
+from runtime.client import ModelCallError
 from runtime.discussion_context import TokenCounter, count_tokens
 
 
@@ -33,7 +33,7 @@ class DiscussionBudget:
         try:
             response = await self.model.complete(messages, tools, max_tokens=max_tokens)
             charged = response.tokens or reservation
-        except ModelOutputLimitError as exc:
+        except ModelCallError as exc:
             charged = exc.tokens or reservation
             raise
         finally:

@@ -183,7 +183,10 @@ async def test_human_correction_after_interrupted_turn_prevents_more_work(tmp_pa
 
 async def test_provider_failure_is_not_treated_as_a_truncated_report(tmp_path):
     runner, config, args = setup(tmp_path, max_steps_per_turn=2)
-    model = ScriptedModel(write("READY"), ModelCallError("unavailable"))
+    model = ScriptedModel(
+        write("READY"), ModelCallError("invalid envelope", tokens=4321, usage_source="provider")
+    )
     result = await runner.run(config, **args, model=model)
     assert result.status != "passed" and result.stop_reason == "model_error"
     assert result.model_calls == 2
+    assert result.tokens == 5321  # Include rejected response usage without a recovery retry.

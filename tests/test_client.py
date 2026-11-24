@@ -25,8 +25,21 @@ def client_for(handler, **kwargs):
     )
 
 
-async def test_truncated_tool_response_retains_usage_without_parsing_partial_arguments():
+@pytest.mark.parametrize(
+    "usage, expected",
+    [
+        ({"total_tokens": 4321}, 4321),
+        ({"prompt_tokens": 20, "completion_tokens": 10}, 30),
+        (None, None),
+    ],
+)
+async def test_truncated_tool_response_retains_usage_without_parsing_partial_arguments(
+    usage, expected
+):
+    requests = []
+
     def handler(request):
+        requests.append(request)
         return httpx.Response(
             200,
             json={
@@ -43,7 +56,7 @@ async def test_truncated_tool_response_retains_usage_without_parsing_partial_arg
                         },
                     }
                 ],
-                "usage": {"total_tokens": 4321},
+                "usage": usage,
             },
         )
 
@@ -53,7 +66,12 @@ async def test_truncated_tool_response_retains_usage_without_parsing_partial_arg
             await client.complete(
                 [ChatMessage(role="user", content="Write a file.")], [], max_tokens=10
             )
-        assert error.value.tokens == 4321
+        assert isinstance(error.value, ModelCallError)
+        if expected is None:
+            assert error.value.usage_source == "estimated" and error.value.tokens > 10
+        else:
+            assert error.value.usage_source == "provider" and error.value.tokens == expected
+        assert len(requests) == 1  # Recovery belongs to the caller, not the HTTP retry loop.
     finally:
         await client.aclose()
 
