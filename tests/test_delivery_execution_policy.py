@@ -203,7 +203,10 @@ async def test_final_step_never_dispatches_tools_in_managed_mode(tmp_path):
     model = ScriptedModel(call("file_read", 1, path="outputs/final.md"), write("READY", 2))
     result, target, _ = await managed_run(tmp_path, model, max_steps=2)
     assert not model.requests[1][1]
-    assert result.stopped_reason == "step_limit" and target.read_text() == "draft"
+    assert result.stopped_reason == "max_rounds" and target.read_text() == "draft"
+    turn = result.turns[0]
+    assert turn.handoff_issue == "invalid_report"
+    assert [call.name for call in turn.tool_calls] == ["file_read"]
 
 
 async def test_inspection_cannot_spend_reads_reserved_for_saved_artifact(tmp_path):
@@ -319,13 +322,13 @@ async def test_current_write_receipt_survives_final_prompt_compaction(tmp_path):
     )
     result, target, _ = await managed_run(tmp_path, model)
     assert target.read_text() == "READY" and result.stopped_reason == "max_rounds"
-    final_messages, final_tools, _ = model.requests[-1]
+    final_messages, final_tools, cap = model.requests[-1]
     assert not final_tools
-    receipts = [
-        m.content for m in final_messages if "Current contribution file_write receipts" in m.content
-    ]
-    assert len(receipts) == 1 and '"path": "outputs/final.md", "ok": true' in receipts[0]
-    assert "not acceptance" in receipts[0]
+    assert cap == 1024
+    assert [m.role for m in final_messages] == ["system", "user"]
+    assert "wrote outputs/final.md" in final_messages[1].content
+    assert "quality not verified" in final_messages[1].content
+    assert all(not m.tool_calls and m.reasoning_content is None for m in final_messages)
 
 
 async def test_unrelated_placeholder_does_not_unlock_verification(tmp_path):

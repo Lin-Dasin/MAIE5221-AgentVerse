@@ -82,9 +82,20 @@ class RequirementAssessment(Contract):
     review_evidence: list[str] = Field(default_factory=list)
 
 
+HandoffIssue = Literal[
+    "report_truncated", "invalid_report", "work_truncated", "contribution_budget"
+]
+
+
+class DeliveryHandoffTurn(DiscussionTurn):
+    """Orchestrator-generated handoff; the member did not finish its turn normally."""
+
+    handoff_issue: HandoffIssue
+
+
 class DeliveryAttempt(Contract):
     attempt: int = Field(ge=0)
-    turns: list[DiscussionTurn]
+    turns: list[DeliveryHandoffTurn | DiscussionTurn]
     stopped_reason: str
     assessments: list[RequirementAssessment]
     tokens: int = Field(ge=0)

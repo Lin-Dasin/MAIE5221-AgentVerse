@@ -68,8 +68,9 @@ review coverage and production integration all affect end-to-end success.
 8. New human messages pause the wrapper with `plan_review_required` before
    further model work at the next poll boundary. The original message is
    returned in `pending_human_messages`; callers must revise/confirm the plan.
-   Polls occur before attempts, between initial discussion rounds, and around
-   acceptance. This is not asynchronous interruption during a tool call.
+   Polls occur before attempts, after a recoverable handoff before dispatching
+   the next member, between initial discussion rounds, and around acceptance.
+   This is not asynchronous interruption during a tool call.
    Protected tools remain blocked; rework does not grant additional permissions.
 
 The runner records per-attempt turns, stop reasons, assessments and usage.
@@ -125,11 +126,13 @@ If using a provider-specific token counter, pass the same counter to the engine
 and the delivery runner. Defaults remain 60,000 total tokens / 2,048 output
 tokens; the prior 240,000 / 8,192 setting remains an explicit test override.
 
-`emit` is awaited per completed turn, including rework, with monotonically
-advancing round numbers. Store only public content in chat; keep tool results
-in traces. Persist `DeliveryResult` separately. Adapter exceptions are reported
-without exposing raw exception messages. D must still trace tools in aborted
-contributions, since only completed contributions have public `DiscussionTurn`s.
+`emit` is awaited per completed turn or marked automatic handoff, including
+rework, with monotonically advancing round numbers. A `DeliveryHandoffTurn`
+has a `handoff_issue` and contains only recorded operations; tally it separately
+from completed model turns. Store only public content in chat; keep tool
+results in traces. Persist `DeliveryResult` separately. Adapter exceptions
+are reported without exposing raw exception messages. D must still trace
+tools independently for terminal failures without an emitted turn.
 Candidate sharing and final packaging remain caller responsibilities. Copies
 under `inputs/shared/` remain unaccepted candidates until the relevant checks
 pass; this runner neither copies files nor automatically publishes an archive.

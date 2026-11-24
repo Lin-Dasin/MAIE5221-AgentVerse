@@ -7,6 +7,7 @@ from protocol.models import ToolDefinition
 
 PRODUCTION_TOOLS = frozenset({"file_write", "code_exec"})
 INSPECTION_CALL_LIMITS = {"file_list": 2, "file_read": 6}
+HANDOFF_OUTPUT_TOKENS = 1024
 
 
 def call_limit(name: str, phase: str) -> int:
@@ -73,7 +74,7 @@ def delivery_step(
     if step == max_steps or available - prompt_tokens - closing_reserve < 128:
         phase = "report"
     if phase == "report":
-        return DeliveryStep(phase, [], min(512, output_cap), "")
+        return DeliveryStep(phase, [], 0, "")
     if phase in {"produce", "source_check"}:
         selected = [
             tool
