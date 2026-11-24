@@ -148,7 +148,8 @@ class AgentRuntime:
                 if self.memory is None:
                     raise ValueError("memory_enabled requires a Role C memory adapter")
                 try:
-                    memory_context = await self.memory.retrieve(task.assignee, task)
+                    recalled = await self.memory.retrieve(task.assignee, task)
+                    memory_context = recalled.text
                 except Exception as exc:
                     await observe("retrieved", ok=False, error_type=type(exc).__name__)
                     if isinstance(exc, TimeoutError):
@@ -160,7 +161,9 @@ class AgentRuntime:
                     )
                 if self.memory_observer is not None:
                     memory_metadata = context_metadata(memory_context)
-                    await observe("retrieved", ok=True, **memory_metadata)
+                    await observe(
+                        "retrieved", ok=True, memory_ids=recalled.memory_ids, **memory_metadata
+                    )
             session = _Session(
                 [
                     ChatMessage(
@@ -346,9 +349,14 @@ class AgentRuntime:
                 summary=str(exc),
             )
         except ModelCallError as exc:
+            session.tokens += exc.tokens
+            exhausted = session.tokens >= context.config.max_task_tokens
             return AgentOutcome(
                 kind="failed",
                 tokens=session.tokens,
-                failure_code=FailureCode.MODEL_ERROR,
-                summary=str(exc),
+                failure_code=(
+                    FailureCode.BUDGET_EXCEEDED if exhausted else FailureCode.MODEL_ERROR
+                ),
+                retryable=not exhausted,
+                summary="Agent exceeded its token budget" if exhausted else str(exc),
             )

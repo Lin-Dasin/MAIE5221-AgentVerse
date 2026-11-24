@@ -23,6 +23,7 @@ from protocol.models import (
     InputRef,
     MemoryEvent,
     ModelResponse,
+    RetrievedMemory,
     Task,
     TaskGraph,
     TaskResult,
@@ -78,14 +79,15 @@ class DiscussionEngine(Protocol):
 
 
 class Memory(Protocol):
-    """C's public async facade; retrieval returns prompt-ready text, not records.
+    """C's async facade returns prompt-ready text and opaque IDs, not records.
 
-    Empty history returns "". Reflection uses task.assignee/result.agent_id;
+    Empty history returns an empty RetrievedMemory. IDs describe only the
+    records included in the returned text. Reflection uses task.assignee/result.agent_id;
     result.critique is optional (for example when execution never reached review).
     Internal record retrieval, ranking and formatting remain C's implementation.
     """
 
-    async def retrieve(self, agent_id: str, task: Task) -> str: ...
+    async def retrieve(self, agent_id: str, task: Task) -> RetrievedMemory: ...
 
     async def reflect(self, task: Task, result: TaskResult) -> None: ...
 

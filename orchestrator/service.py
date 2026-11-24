@@ -60,24 +60,32 @@ class CollaborationService:
                     else type(exc).__name__
                 ),
             )
+        return await self._run_graph(graph, config, started_at)
+
+    async def run_graph(self, graph: TaskGraph, config: RunConfig) -> RunResult:
+        """Run a fixed TaskGraph and report execution failures in a RunResult."""
+        return await self._run_graph(graph, config, datetime.now(UTC))
+
+    async def _run_graph(
+        self, graph: TaskGraph, config: RunConfig, started_at: datetime
+    ) -> RunResult:
         try:
             result = await self.scheduler.run(graph, config)
         except Exception as exc:
+            if isinstance(exc, PlanContractError):
+                code, detail = FailureCode.INVALID_OUTPUT, str(exc)
+            elif isinstance(exc, TimeoutError):
+                code, detail = FailureCode.TIMEOUT, "Execution timed out"
+            else:
+                code, detail = FailureCode.INTERNAL_ERROR, type(exc).__name__
             return RunResult(
                 run_id=config.run_id,
                 graph=graph,
                 tasks=[],
                 started_at=started_at,
                 finished_at=datetime.now(UTC),
-                failure_code=FailureCode.INVALID_OUTPUT
-                if isinstance(exc, PlanContractError)
-                else FailureCode.INTERNAL_ERROR,
-                failure_reason="Run initialization failed: "
-                + (str(exc) if isinstance(exc, PlanContractError) else type(exc).__name__),
+                failure_code=code,
+                failure_reason=f"Graph execution failed: {detail}",
             )
         result.started_at = started_at
         return result
-
-    async def run_graph(self, graph: TaskGraph, config: RunConfig) -> RunResult:
-        """Validate and run a fixed graph; invalid contracts raise before side effects."""
-        return await self.scheduler.run(graph, config)

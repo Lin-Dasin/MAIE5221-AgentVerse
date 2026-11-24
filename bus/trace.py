@@ -13,6 +13,7 @@ from protocol.models import (
     HITLDecision,
     HITLRequest,
     InputRef,
+    MemoryEvent,
     RunResult,
     Task,
     TaskGraph,
@@ -140,6 +141,12 @@ class JsonlTrace:
             approved=decision.approved,
             source=decision.source,
         )
+
+    async def memory_event(self, event: MemoryEvent) -> None:
+        metadata = event.model_dump(exclude={"run_id", "memory_ids"})
+        if event.phase == "retrieved" and event.ok:
+            metadata["memory_ids"] = event.memory_ids
+        self._append("memory_lifecycle", event.run_id, **metadata)
 
     async def run_finished(self, result: RunResult) -> None:
         passed = (

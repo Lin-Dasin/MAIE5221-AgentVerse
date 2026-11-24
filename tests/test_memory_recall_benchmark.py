@@ -7,6 +7,7 @@ from pathlib import Path
 
 from harness.memory_recall import run_memory_recall
 from memory.jsonl_memory import JsonlMemory
+from protocol.models import RetrievedMemory
 
 
 def test_hits_and_language_totals_match_retrieved_text():
@@ -38,7 +39,9 @@ def test_hits_and_language_totals_match_retrieved_text():
 
 def test_retrieving_an_unrelated_memory_is_a_miss(monkeypatch):
     async def unrelated(self, agent_id, task):
-        return "A different reflection from the same agent."
+        return RetrievedMemory(
+            text="A different reflection from the same agent.", memory_ids=["other"]
+        )
 
     monkeypatch.setattr(JsonlMemory, "retrieve", unrelated)
     report = run_memory_recall()

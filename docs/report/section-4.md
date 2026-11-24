@@ -38,7 +38,8 @@ diagnostic. Runtime files are not committed to Git.
 ## 4.3 Retrieval and Prompt Context
 
 `retrieve(agent_id, task)` reads the requesting agent's history, ranks records,
-and returns prompt-ready text. No matching record returns an empty string, so
+and returns prompt-ready text plus the opaque IDs of the records included.
+No matching record returns empty text and an empty ID list, so
 memory absence does not block task execution. The adapter returns at most three
 records and limits the total context length.
 

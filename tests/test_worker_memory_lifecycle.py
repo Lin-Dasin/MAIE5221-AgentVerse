@@ -76,6 +76,13 @@ async def test_chinese_worker_memory_with_http_wire_and_real_adapters(tmp_path, 
     assert len({item["run_id"] for item in evidence["configs"]}) == 2
     trace = (evidence_path.parent / evidence["trace"]).read_text()
     assert "MEM-" not in trace and "Relevant private memory" not in trace
+    rows = [json.loads(line) for line in trace.splitlines()]
+    events = [row for row in rows if row["event"] == "memory_lifecycle"]
+    assert all("memory_ids" not in row for row in events if row["phase"] != "retrieved")
+    recalled = [row for row in events if row["task_id"] == "recall" and row["phase"] == "retrieved"]
+    assert len(recalled) == int(enabled)
+    if enabled:
+        assert len(recalled[0]["memory_ids"]) == 1
 
 
 async def test_failed_worker_model_call_marks_injection_failure_and_reflects(tmp_path):
