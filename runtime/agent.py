@@ -148,7 +148,8 @@ class AgentRuntime:
                 if self.memory is None:
                     raise ValueError("memory_enabled requires a Role C memory adapter")
                 try:
-                    memory_context = await self.memory.retrieve(task.assignee, task)
+                    recalled = await self.memory.retrieve(task.assignee, task)
+                    memory_context = recalled.text
                 except Exception as exc:
                     await observe("retrieved", ok=False, error_type=type(exc).__name__)
                     if isinstance(exc, TimeoutError):
@@ -160,7 +161,9 @@ class AgentRuntime:
                     )
                 if self.memory_observer is not None:
                     memory_metadata = context_metadata(memory_context)
-                    await observe("retrieved", ok=True, **memory_metadata)
+                    await observe(
+                        "retrieved", ok=True, memory_ids=recalled.memory_ids, **memory_metadata
+                    )
             session = _Session(
                 [
                     ChatMessage(

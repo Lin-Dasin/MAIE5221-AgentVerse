@@ -130,7 +130,7 @@ The record-retrieval and context-building functions previously described in C's 
 | --- | --- | --- |
 | B | `async execute(call: ToolCall, context: ExecutionContext) -> ToolResult` | Execute a concrete tool; return an explicit error on failure |
 | B | Supply `list[ToolDefinition]` | Tool names, descriptions, parameter JSON schemas and approval requirements |
-| C | `async retrieve(agent_id: str, task: Task) -> str` | Prepared private memory ready for prompt injection; empty string when no records exist |
+| C | `async retrieve(agent_id: str, task: Task) -> RetrievedMemory` | Private prompt text and opaque IDs for the records included; both empty on a miss |
 | C | `async reflect(task: Task, result: TaskResult) -> None` | Persist experience for `result.agent_id`; the optional verdict is in `result.critique` |
 | D | `async check(rules: list[AcceptanceRule], root: Path) -> CriticResult` | Perform real acceptance checks; counts must be consistent with the verdict |
 | D | Implement all five async `Observer` callbacks | Plan completion, task status, delegation, file handoffs and approval decisions |
@@ -252,7 +252,7 @@ Mark operations requiring confirmation with `ToolDefinition.requires_approval=Tr
 ### Initial Deliverables
 
 1. Implement an object conforming to `Memory`, using the same root as A/B.
-2. `retrieve()` performs reading, ranking, truncation and context assembly internally. Return a string, not a list of records.
+2. `retrieve()` performs reading, ranking, truncation and context assembly internally. Return `RetrievedMemory`; append an ID only once its record is included in the returned text.
 3. `reflect()` receives terminal results. A task may fail before verification or be blocked by an upstream failure, so `result.critique` may be `None` and `started_at` may also be absent.
 4. Supply `profiles/*.yaml` for the existing `load_profiles()` function.
 
@@ -286,8 +286,10 @@ Control the model, tasks, prompts, acceptance rules and budgets, and record both
 
 `build_service(memory=..., memory_observer=...)` accepts an optional
 `MemoryObserver` with `async memory_event(event: MemoryEvent)`. It is separate
-from the existing task `Observer` and does not change `Memory.retrieve()` or
-`Memory.reflect()`. One retrieval occurs when a new Worker attempt starts;
+from the existing task `Observer`. `JsonlTrace` records opaque IDs only for
+successful retrieval; IDs are never inserted into the model prompt. The Worker
+demo correlates the retrieved ID with its seed reflection. One retrieval occurs
+when a new Worker attempt starts;
 `injected` records the result of each model-client call carrying that context,
 including empty context, and `reflected` reports the terminal write. Disabled
 reads emit neither retrieval nor injection events. Writes are controlled

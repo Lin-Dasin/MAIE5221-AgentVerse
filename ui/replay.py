@@ -70,6 +70,11 @@ def describe_event(event: TraceEvent) -> str:
             children = data.get("child_task_ids")
             child_labels = ", ".join(map(_label, children)) if isinstance(children, list) else "?"
             return f"{task} ({agent}) delegated to {child_labels or '?'}"
+        case "memory_lifecycle":
+            result = _outcome(data.get("ok"), "ok", "failed")
+            ids = data.get("memory_ids")
+            count = f" ({len(ids)} record(s))" if isinstance(ids, list) else ""
+            return f"{task} ({agent}) memory {_label(data.get('phase'))}: {result}{count}"
         case "run_finished":
             status = _label(data.get("status"))
             duration = _label(data.get("duration_sec"))

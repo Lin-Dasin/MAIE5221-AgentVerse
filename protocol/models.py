@@ -302,6 +302,19 @@ class AgentOutcome(Contract):
         return self
 
 
+class RetrievedMemory(Contract):
+    """Prompt-ready private memory and the IDs of records included in its text."""
+
+    text: str = ""
+    memory_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if bool(self.text.strip()) != bool(self.memory_ids):
+            raise ValueError("memory text and record IDs must both be present or absent")
+        return self
+
+
 MemoryPhase = Literal["retrieved", "injected", "reflected"]
 
 
@@ -314,10 +327,17 @@ class MemoryEvent(Contract):
     attempt: int = Field(ge=0)
     phase: MemoryPhase
     ok: bool
+    memory_ids: list[str] = Field(default_factory=list)
     context_chars: int = Field(default=0, ge=0)
     context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     model_step: int | None = Field(default=None, ge=1)
     error_type: str | None = None
+
+    @model_validator(mode="after")
+    def ids_only_on_retrieval(self) -> Self:
+        if self.memory_ids and (self.phase != "retrieved" or not self.ok):
+            raise ValueError("record IDs only belong to successful retrieval events")
+        return self
 
 
 class ChatMessage(Contract):

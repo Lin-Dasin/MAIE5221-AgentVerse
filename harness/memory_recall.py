@@ -81,7 +81,8 @@ async def _measure(root: Path) -> dict:
         hits = 0
         for case in corpus:
             query = _task(f"query-{case.topic}", case.query)
-            text = await memory.retrieve(query.assignee, query)
+            recalled = await memory.retrieve(query.assignee, query)
+            text = recalled.text
             hit = case.advice in text
             hits += int(hit)
             rows.append(
@@ -92,6 +93,7 @@ async def _measure(root: Path) -> dict:
                     "query": case.query,
                     "expected_marker": case.advice,
                     "retrieved_text": text,
+                    "memory_ids": recalled.memory_ids,
                     "hit": hit,
                 }
             )
