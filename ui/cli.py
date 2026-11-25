@@ -173,6 +173,8 @@ def _messages(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from ui.scenario import main as mid_test
+
     commands = {
         "run": _run_goal,
         "h1": h1_demo.main,
@@ -182,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": _summarize,
         "replay": replay.main,
         "messages": _messages,
+        "mid-test": mid_test,
     }
     parser = argparse.ArgumentParser(
         prog="agentverse",
