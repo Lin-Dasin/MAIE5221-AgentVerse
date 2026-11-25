@@ -29,13 +29,48 @@ def contains_tool_markup(text: str) -> bool:
     return "<" in text and "DSML" in text.upper()
 
 
+HITL_MARKER = "[HITL]"
+
+
+def status_footer(turn: DiscussionTurn) -> str:
+    """Deterministic verification note derived only from recorded tool calls."""
+    last_write = -1
+    checked = False
+    for index, (call, result) in enumerate(zip(turn.tool_calls, turn.tool_results, strict=True)):
+        if call.name == "file_write" and result.ok:
+            last_write = index
+            checked = False
+        elif (
+            call.name == "code_exec"
+            and result.ok
+            and isinstance(result.data, dict)
+            and result.data.get("exit_code") == 0
+        ):
+            checked = True
+    if checked:
+        return "[Verified: code_exec exit 0 after the last write.]"
+    if last_write >= 0:
+        return "[Unverified: no successful code_exec after the last write.]"
+    return "[Unverified: no execution check was recorded.]"
+
+
 def report_prompt(turn: DiscussionTurn, artifacts: Sequence[str]) -> list[ChatMessage]:
     return [
         ChatMessage(
             role="system",
-            content="Write a handoff only, at most three short bullets: saved paths, checks "
-            "actually recorded, and any work still unverified. No tools or tool markup. Do "
-            "not paste the deliverable, invent findings, or decide acceptance.",
+            content=(
+                "Write a professional handoff for teammates and the human in 150-250 characters "
+                "(or the equivalent in Chinese). Use these labels: Decision: respond to upstream "
+                "and state the key decision and its reason; Artifact & interface: saved paths plus "
+                "the key interfaces, conclusions or gaps downstream must know; Next request: name "
+                "who should act next and on what; Honest status: one sentence strictly based "
+                "on the recorded operations, never claiming tests or checks that were not "
+                "recorded. If an "
+                "ambiguity, irreversible action or risky assumption needs the human, add one line "
+                f"starting with {HITL_MARKER}: state a reversible assumption and one focused "
+                "question. Otherwise omit it. No tools, no tool markup, no deliverable paste and "
+                "no acceptance verdict."
+            ),
         ),
         ChatMessage(
             role="user",
@@ -82,7 +117,7 @@ async def report(
         ):
             issue = "invalid_report"
         else:
-            turn.content = response.content
+            turn.content = response.content.strip() + "\n\n" + status_footer(turn)
             return turn
         break
     return fallback(turn, issue)

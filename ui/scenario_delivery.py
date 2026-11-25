@@ -17,8 +17,9 @@ from harness import (
     scenario_software,
 )
 from harness.verdict import FileVerifier
+from memory.scenario_memory import ScenarioMemory
 from orchestrator.artifacts import archive_path, copy_file, inside
-from protocol.models import ExecutionContext, RunConfig, ToolCall, ToolResult
+from protocol.models import AgentProfile, ExecutionContext, RunConfig, ToolCall, ToolResult
 from protocol.ports import ModelClient, ToolExecutor
 from ui.scenario import TaskEngine, TaskRequest, _require_unlinked, file_sha256
 from ui.scenario_engine import (
@@ -46,6 +47,121 @@ SLIDES = "fund-slides"
 BOOKING = "booking-app"
 DASHBOARD = "usage-dashboard"
 RECORDED_SEARCH = "inputs/recorded-search-results.json"
+
+_LESSON_RULES = (
+    (
+        "did not serve",
+        "Run the program with the requested host/port/database and verify it before reporting.",
+        ("verification", "code"),
+    ),
+    (
+        "syntax",
+        "Compile or syntax-check code before saving the final program.",
+        ("verification", "code"),
+    ),
+    (
+        "No usable web_search results",
+        "For evidence tasks, run a targeted web_search and cite only returned URLs/excerpts.",
+        ("search", "evidence"),
+    ),
+    (
+        "Extra inputs are not permitted",
+        "Match the required evidence schema exactly and omit extra fields.",
+        ("schema", "evidence"),
+    ),
+    (
+        "missing_artifact",
+        "Write the exact declared artifact paths; a claimed filename is not a deliverable.",
+        ("artifact", "handoff"),
+    ),
+    (
+        "usage",
+        "Keep the usage guide aligned with the implemented interface.",
+        ("guide", "handoff"),
+    ),
+    (
+        "pending repair",
+        "Read upstream repaired evidence before rewriting downstream deliverables.",
+        ("upstream", "handoff"),
+    ),
+    (
+        "cancellation",
+        "Validate aggregation semantics with sample data before finalizing.",
+        ("aggregation", "verification"),
+    ),
+)
+
+
+def _session_dir(workspace: Path) -> Path:
+    for parent in Path(workspace).resolve().parents:
+        if parent.name == "tasks":
+            return parent.parent
+    raise ValueError("scenario workspace is not inside a session")
+
+
+def _distill_lessons(
+    agent_id: str, result: "delivery.DeliveryResult", tools: set[str]
+) -> list[tuple[str, tuple[str, ...]]]:
+    defects: list[str] = []
+    failed = False
+    for attempt in result.attempts:
+        for assessment in attempt.assessments:
+            if assessment.owner == agent_id and assessment.status == "failed":
+                failed = True
+                defects.extend(assessment.defects)
+    text = " ".join(defects).casefold()
+    lessons: dict[str, tuple[str, ...]] = {}
+    for marker, lesson, tags in _LESSON_RULES:
+        if marker.casefold() in text:
+            lessons.setdefault(lesson, tags)
+    if "code_exec" in tools:
+        lessons.setdefault(
+            "Run code_exec to compile or test code before finalizing.", ("verification", "code")
+        )
+    if "web_search" in tools:
+        lessons.setdefault(
+            "Cite only URLs and excerpts returned by this task's search.", ("search", "evidence")
+        )
+    if not lessons:
+        if failed:
+            lessons["Repair only the named defects and re-check the actual files."] = (
+                "repair",
+                "verification",
+            )
+        else:
+            lessons["Read the required inputs and exact artifact paths before writing."] = (
+                "handoff",
+                "artifact",
+            )
+    return [(lesson, tags) for lesson, tags in list(lessons.items())[:3]]
+
+
+def _inject_memory(
+    profiles: dict[str, "AgentProfile"],
+    memory: ScenarioMemory,
+    task_id: str,
+    task_text: str,
+) -> dict[str, list[str]]:
+    recalled: dict[str, list[str]] = {}
+    for agent_id, profile in list(profiles.items()):
+        entries = memory.recall(agent_id, task_text, limit=3)
+        if not entries:
+            continue
+        ids = [entry.entry_id for entry in entries]
+        recalled[agent_id] = ids
+        memory.log_event("memory_recall", agent_id, task_id, ids)
+        lessons = "\n".join(
+            f"- {lesson}" for entry in entries for lesson in entry.lessons
+        )
+        profiles[agent_id] = profile.model_copy(
+            update={
+                "system_prompt": profile.system_prompt
+                + "\n\nPRIVATE LESSONS from earlier tasks in this session (methodology only; "
+                "never copy old task facts, names, figures or URLs):\n"
+                + lessons
+            }
+        )
+    return recalled
 
 
 def validate_managed_task(scenario_id: str, number: int) -> None:
@@ -572,8 +688,9 @@ def managed_discussion_engine(
     number: int,
     max_rounds: int = 1,
     max_task_tokens: int = 60_000,
-    max_output_tokens: int = 2048,
+    max_output_tokens: int = 2_048,
     max_rework_rounds: int = 2,
+    hitl_pause_timeout_sec: float = 0.0,
 ) -> TaskEngine:
     """Stage the exact model-produced bytes after all deterministic checks pass."""
     from orchestrator.delivery import DeliveryDiscussionRunner
@@ -693,7 +810,10 @@ def managed_discussion_engine(
                     )
             emit(turn.speaker, turn.content)
 
-        engine = RoundRobinDiscussionEngine(_file_tools(executor, request.inputs))
+        engine = RoundRobinDiscussionEngine(
+            _file_tools(executor, request.inputs),
+            hitl_pause_timeout_sec=hitl_pause_timeout_sec,
+        )
         runner = DeliveryDiscussionRunner(
             engine,
             FileVerifier(),
@@ -803,6 +923,12 @@ def managed_discussion_engine(
                         update={"system_prompt": original.system_prompt + guidance}
                     )
                 }
+        session_dir = _session_dir(request.workspace)
+        memory = ScenarioMemory(session_dir)
+        profiles = dict(profiles)
+        recalled = _inject_memory(
+            profiles, memory, request.task.task_id, request.task.text
+        )
         result = await runner.run(
             config,
             plan=plan,
@@ -814,6 +940,21 @@ def managed_discussion_engine(
             human=_HumanInput(human),
             emit=publish,
         )
+        written: dict[str, list[str]] = {}
+        for agent_id in request.profiles:
+            lessons = _distill_lessons(
+                agent_id, result, set(request.profiles[agent_id].tools)
+            )
+            entry = memory.write(
+                agent_id,
+                task_id=request.task.task_id,
+                outcome=result.status,
+                lessons=lessons,
+            )
+            written[agent_id] = [entry.entry_id]
+            memory.log_event(
+                "memory_write", agent_id, request.task.task_id, [entry.entry_id]
+            )
         candidates = _stage_verified(request, workspaces, result)
         summary = {
             "mode": "managed",
@@ -827,6 +968,7 @@ def managed_discussion_engine(
                 for item in result.attempts
             ],
             "candidates": candidates,
+            "memory": {"recalled": recalled, "written": written},
         }
         if source_owner is not None:
             summary["search_evidence"] = {

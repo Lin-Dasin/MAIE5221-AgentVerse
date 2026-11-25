@@ -398,3 +398,35 @@ async def test_stalled_human_poll_returns_completed_turns(monkeypatch):
     assert result.stopped_reason == "timeout"
     assert [turn.content for turn in result.turns] == ["What date should we use?"]
     assert len(model.requests) == 1
+
+
+async def test_hitl_marker_pauses_and_injects_a_human_reply():
+    config = discussion(speakers=["writer", "reviewer"], moderator="writer", max_rounds=1)
+    engine = RoundRobinDiscussionEngine([], hitl_pause_timeout_sec=0.5)
+    model = ScriptedModel(
+        ModelResponse(
+            content="[HITL] Assumption: keep the current scope; Question: choose option A or B?"
+        ),
+        ModelResponse(content="Acknowledged."),
+    )
+    class Reply:
+        def __init__(self) -> None:
+            self.reply = ChatMessage(role="user", content="Use option B.")
+
+        async def next_message(self):
+            message, self.reply = self.reply, None
+            return message
+
+    result = await engine.run(
+        config,
+        profiles={"writer": profile("writer", []), "reviewer": profile("reviewer", [])},
+        history=[],
+        model=model,
+        executor=NoTools(),
+        human=Reply(),
+        emit=None,
+    )
+
+    assert result.turns[0].content.startswith("[HITL]")
+    assert len(result.turns) == 2
+    assert any("Use option B." in message.content for message in model.requests[1][0])

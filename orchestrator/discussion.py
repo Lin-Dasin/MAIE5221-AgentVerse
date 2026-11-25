@@ -19,6 +19,7 @@ from protocol.models import (
 )
 from protocol.ports import HumanInput, ModelClient, ToolExecutor
 from runtime.discussion_context import TokenCounter, estimate_tokens
+from runtime.discussion_handoff import HITL_MARKER
 from runtime.discussion_speaker import SpeakerStopped, speak
 from runtime.discussion_workflow import progress_view
 
@@ -36,6 +37,7 @@ class RoundRobinDiscussionEngine:
         turn_timeout_sec: float = 120,
         prompt_token_counter: TokenCounter = estimate_tokens,
         max_search_calls_per_turn: int = 2,
+        hitl_pause_timeout_sec: float = 0.0,
     ) -> None:
         self._tools = {tool.name: tool.model_copy(deep=True) for tool in tool_definitions}
         if len(self._tools) != len(tool_definitions):
@@ -54,6 +56,9 @@ class RoundRobinDiscussionEngine:
         if not 0 <= max_search_calls_per_turn <= 16:
             raise ValueError("max_search_calls_per_turn must be between 0 and 16")
         self._max_search = max_search_calls_per_turn
+        if not math.isfinite(hitl_pause_timeout_sec) or hitl_pause_timeout_sec < 0:
+            raise ValueError("hitl_pause_timeout_sec must be finite and non-negative")
+        self._hitl_pause = hitl_pause_timeout_sec
         self._delivery_mode = False
         self._repair = False
         self._delivery_artifacts: dict[str, tuple[str, ...]] = {}
@@ -190,6 +195,21 @@ class RoundRobinDiscussionEngine:
                         await poll_human()
                     except TimeoutError:
                         return finish("timeout")
+                if self._hitl_pause > 0 and HITL_MARKER in turn.content:
+                    # Explicit pause slot: a human reply is injected; otherwise the
+                    # stated reversible assumption lets unattended runs continue.
+                    try:
+                        async with asyncio.timeout(self._hitl_pause):
+                            message = await human.next_message()
+                    except TimeoutError:
+                        message = None
+                    if message is not None:
+                        if message.role != "user" or message.tool_calls or message.tool_call_id:
+                            raise ValueError("HumanInput must return a plain user message")
+                        if message.content.strip():
+                            public_history.append(
+                                ChatMessage(role="user", content=message.content)
+                            )
 
             if self._delivery_mode and remaining == round_start and all(
                 isinstance(turn, DeliveryHandoffTurn)

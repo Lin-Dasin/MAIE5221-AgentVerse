@@ -3,8 +3,15 @@
 import pytest
 
 from protocol.delivery import DeliveryHandoffTurn, DeliveryResult
-from protocol.models import ChatMessage
+from protocol.models import (
+    ChatMessage,
+    DiscussionTurn,
+    ModelResponse,
+    ToolCall,
+    ToolResult,
+)
 from runtime.client import ModelCallError, ModelOutputLimitError
+from runtime.discussion_handoff import HITL_MARKER, report, report_prompt, status_footer
 from tests.test_delivery_lifecycle import reply, requirement, setup, write
 from tests.test_discussion import ScriptedModel
 
@@ -15,7 +22,9 @@ async def test_last_step_truncation_gets_one_tool_free_retry(tmp_path):
     result = await runner.run(config, **args, model=model)
 
     assert result.status == "passed" and result.tokens == 1700
-    assert result.attempts[0].turns[0].content == "Short handoff."
+    content = result.attempts[0].turns[0].content
+    assert content.startswith("Short handoff.")
+    assert "[Unverified" in content
     assert [req[2] for req in model.requests[1:]] == [1024, 1024]
     assert all(req[1] == [] for req in model.requests[1:])
     assert model.requests[2][0][-1].content == "Previous report was cut off. Use one line."
@@ -31,7 +40,9 @@ async def test_work_and_report_truncation_have_separate_recovery(tmp_path):
     result = await runner.run(config, **args, model=model)
 
     assert result.status == "passed" and result.tokens == 2210
-    assert result.attempts[0].turns[0].content == "Saved."
+    content = result.attempts[0].turns[0].content
+    assert content.startswith("Saved.")
+    assert "[Unverified" in content
     assert [req[2] for req in model.requests[2:]] == [700, 700]
     assert all(req[1] == [] for req in model.requests[2:])
 
@@ -136,6 +147,79 @@ async def test_member_budget_stop_does_not_consume_the_next_members_opportunity(
     assert not first.tool_calls and not (args["workspaces"]["writer"] / "outputs").exists()
     assert second.speaker == "editor" and second.tool_results[0].ok
     assert result.status == "partial" and result.tokens == 5101
+
+
+class _TextModel:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    async def complete(self, messages, tools, *, max_tokens):
+        return ModelResponse(content=self.text, tokens=10)
+
+
+def _turn(*calls):
+    tool_calls = [call for call, _ in calls]
+    tool_results = [result for _, result in calls]
+    return DiscussionTurn(
+        round=1,
+        speaker="dev",
+        content="Draft.",
+        tool_calls=tool_calls,
+        tool_results=tool_results,
+        tokens=0,
+    )
+
+
+async def test_report_prompt_requests_structured_handoff_and_appends_unverified_footer():
+    turn = _turn(
+        (
+            ToolCall(
+                call_id="w",
+                name="file_write",
+                arguments={"path": "outputs/app.py", "text": "print(1)"},
+            ),
+            ToolResult(ok=True, data={"path": "outputs/app.py"}),
+        )
+    )
+    prompt = report_prompt(turn, ["outputs/app.py"])
+    text = "\n".join(message.content for message in prompt)
+    for label in ("Decision", "Artifact & interface", "Next request", "Honest status"):
+        assert label in text
+    assert HITL_MARKER in text
+
+    output = await report(
+        turn,
+        messages=prompt,
+        model=_TextModel(
+            "Decision: keep the draft.\n"
+            "Artifact & interface: outputs/app.py.\n"
+            "Next request: qa should check it.\n"
+            "Honest status: no execution check was run."
+        ),
+        token_counter=lambda *_: 10,
+        token_limit=1000,
+        output_cap=200,
+    )
+    assert output.content.startswith("Decision:")
+    assert "[Unverified" in output.content
+
+
+def test_verified_footer_requires_code_exec_after_the_last_write():
+    turn = _turn(
+        (
+            ToolCall(
+                call_id="w",
+                name="file_write",
+                arguments={"path": "outputs/app.py", "text": "print(1)"},
+            ),
+            ToolResult(ok=True, data={"path": "outputs/app.py"}),
+        ),
+        (
+            ToolCall(call_id="c", name="code_exec", arguments={"code": "print(1)"}),
+            ToolResult(ok=True, data={"exit_code": 0}),
+        ),
+    )
+    assert status_footer(turn).startswith("[Verified")
 
 
 async def test_global_budget_exhausted_by_report_cannot_start_next_member(tmp_path):
