@@ -1,0 +1,6 @@
+scenario_id: scenario_2_newsroom
+roles:
+  chief_editor: [file_read, file_write]
+  reporter: [web_search, file_write]
+  fact_checker: [web_search, file_read, file_write]
+  editor: [file_read, file_write]

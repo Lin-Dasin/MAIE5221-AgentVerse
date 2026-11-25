@@ -1,0 +1,6 @@
+scenario_id: scenario_1_software
+roles:
+  lead: [file_read, file_write]
+  dev: [file_write, file_read]
+  qa: [file_read, file_write]
+  release: [file_read, file_write]

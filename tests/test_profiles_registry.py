@@ -49,5 +49,14 @@ def test_a_planner_and_at_least_one_worker_exist() -> None:
     assert roles.count("worker") >= 1, "no worker profile"
 
 
+def test_coder_has_the_computation_tools_without_expanding_other_profiles() -> None:
+    profiles = load_profiles(PROFILES_DIR)
+
+    assert profiles["coder"].tools == ["code_exec", "file_read", "file_write"]
+    assert "code_exec" not in profiles["researcher"].tools
+    assert "git_commit" not in profiles["writer"].tools
+    assert "git_push" not in profiles["writer"].tools
+
+
 def name_set() -> set[str]:
     return {tool.definition.name for tool in build().values()}
