@@ -143,6 +143,7 @@ def discussion_engine(
     max_rounds: int = 4,
     max_task_tokens: int = 60_000,
     max_output_tokens: int = 2048,
+    hitl_pause_timeout_sec: float = 0.0,
 ) -> TaskEngine:
     """Run open discussion, retaining candidate files for explicit human acceptance."""
     discussion = import_module("orchestrator.discussion")
@@ -162,7 +163,8 @@ def discussion_engine(
             emit(turn.speaker, turn.content)
 
         result = await discussion.RoundRobinDiscussionEngine(
-            _file_tools(executor, request.inputs)
+            _file_tools(executor, request.inputs),
+            hitl_pause_timeout_sec=hitl_pause_timeout_sec,
         ).run(
             config,
             profiles=request.profiles,
@@ -214,7 +216,9 @@ def make_live_engine(
     max_task_tokens: int,
     max_output_tokens: int,
     managed_task: tuple[str, int] | None = None,
-    max_rework_rounds: int = 2,
+    max_rework_rounds: int = 3,
+    hitl_pause_timeout_sec: float = 0.0,
+    generic_verifier: bool = False,
 ) -> TaskEngine:
     """Construct the configured DeepSeek client inside the running event loop."""
     if find_spec("orchestrator.discussion") is None:
@@ -239,7 +243,9 @@ def make_live_engine(
                 max_output_tokens=max_output_tokens,
             )
             if managed_task is None:
-                engine = discussion_engine(client, **limits)
+                engine = discussion_engine(
+                    client, hitl_pause_timeout_sec=hitl_pause_timeout_sec, **limits
+                )
             else:
                 from ui.scenario_delivery import managed_discussion_engine
 
@@ -249,6 +255,8 @@ def make_live_engine(
                     scenario_id=scenario,
                     number=number,
                     max_rework_rounds=max_rework_rounds,
+                    hitl_pause_timeout_sec=hitl_pause_timeout_sec,
+                    generic_verifier=generic_verifier,
                     **limits,
                 )
             await engine(request, human, emit)

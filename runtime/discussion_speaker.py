@@ -83,6 +83,7 @@ async def speak(
     delivery_mode: bool = False,
     repair: bool = False,
     required_artifacts: Sequence[str] = (),
+    require_all_artifacts: bool = False,
 ) -> DiscussionTurn:
     allowed = {name: tool_definitions[name] for name in profile.tools}
     offered = [tool for tool in allowed.values() if not tool.requires_approval]
@@ -377,21 +378,24 @@ async def speak(
                 continue
             if not response.content.strip():
                 raise SpeakerStopped("invalid_model_output")
-            performed_work = any(
-                result.ok
-                and call.name == "file_write"
-                and (
-                    not managed
-                    or (
-                        output_path(call.arguments.get("path")) is not None
-                        and (
-                            not required_artifacts
-                            or output_path(call.arguments.get("path")) in required_artifacts
-                        )
-                    )
-                )
+            written = {
+                path
                 for call, result in zip(calls, results, strict=True)
-            )
+                if result.ok
+                and call.name == "file_write"
+                and (path := output_path(call.arguments.get("path"))) is not None
+            }
+            if managed and required_artifacts:
+                performed_work = (
+                    all(path in written for path in required_artifacts)
+                    if require_all_artifacts
+                    else bool(written.intersection(required_artifacts))
+                )
+            else:
+                performed_work = any(
+                    result.ok and call.name == "file_write"
+                    for call, result in zip(calls, results, strict=True)
+                )
             if (
                 not finalizing
                 and step < max_steps - 1

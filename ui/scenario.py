@@ -6,6 +6,7 @@ import hashlib
 import json
 import sqlite3
 import stat
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from harness.scenario import (
 from harness.scenario_export import export_scenario
 from orchestrator.artifacts import archive_path, copy_file, inside
 from protocol.models import AgentProfile, Contract, Identifier
+from ui.scenario_metrics import record_task_metrics
 
 NOTIFIER = "orchestrator"
 
@@ -230,7 +232,9 @@ async def run_task(
         request = TaskRequest(
             task, session.conversation_id, run_id, profiles, history, workspace, inputs
         )
+        started_at = time.monotonic()
         outputs = await engine(request, human, emit)
+        record_task_metrics(session_dir, task.task_id, time.monotonic() - started_at)
         if outputs is None:
             return None
         _publish_accepted(workspace, outputs, accepted)
@@ -284,6 +288,7 @@ def accept_attempt(
                     f"Artifact is not a listed candidate from a scenario agent: {output}"
                 )
         _publish_accepted(workspace, artifacts, accepted, expected_hashes=candidates)
+        record_task_metrics(session_dir, task.task_id)
     return accepted
 
 
@@ -325,7 +330,18 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
         "--managed", action="store_true", help="Run automated checks and owner-directed rework"
     )
     run.add_argument(
-        "--max-rework-rounds", type=int, choices=range(4), help="Managed mode, default: 2"
+        "--generic-checks",
+        action="store_true",
+        help="Use generic file checks instead of Mid-specific verifiers (requires --managed)",
+    )
+    run.add_argument(
+        "--max-rework-rounds", type=int, choices=range(4), help="Managed mode, default: 3"
+    )
+    run.add_argument(
+        "--hitl-pause-sec",
+        type=float,
+        default=0.0,
+        help="Seconds to pause for a human reply after a [HITL] turn; 0 keeps auto mode",
     )
     accept = subcommands.add_parser("accept", help="Accept selected files from one discussion")
     accept.add_argument("run_dir", type=Path)
@@ -350,6 +366,8 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
     elif args.action == "run":
         if args.max_rework_rounds is not None and not args.managed:
             parser.error("--max-rework-rounds requires --managed")
+        if args.generic_checks and not args.managed:
+            parser.error("--generic-checks requires --managed")
         if engine is None:
             from ui.scenario_engine import make_live_engine
 
@@ -366,12 +384,16 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
                 engine = make_live_engine(
                     managed_task=(session.scenario.scenario_id, args.number),
                     max_rework_rounds=(
-                        2 if args.max_rework_rounds is None else args.max_rework_rounds
+                        3 if args.max_rework_rounds is None else args.max_rework_rounds
                     ),
+                    hitl_pause_timeout_sec=args.hitl_pause_sec,
+                    generic_verifier=args.generic_checks,
                     **limits,
                 )
             else:
-                engine = make_live_engine(**limits)
+                engine = make_live_engine(
+                    hitl_pause_timeout_sec=args.hitl_pause_sec, **limits
+                )
         accepted = asyncio.run(run_task(session_dir, args.number, args.profiles_dir, engine))
         if accepted is None:
             print(f"Task {args.number} is unaccepted. Review any candidates with mid-test accept.")

@@ -99,7 +99,42 @@ def test_run_command_forwards_managed_limits(tmp_path, monkeypatch):
         "max_rework_rounds": 0,
         "max_output_tokens": 1024,
         "max_task_tokens": 60_000,
+        "hitl_pause_timeout_sec": 0.0,
+        "generic_verifier": False,
     }
+
+
+def test_run_command_forwards_hitl_pause(tmp_path, monkeypatch):
+    session, profiles = _prepare_newsroom(tmp_path)
+    options = {}
+
+    def fake_make_live_engine(**kwargs):
+        options.update(kwargs)
+
+        async def engine(request, human, emit):
+            return None
+
+        return engine
+
+    monkeypatch.setattr(scenario_engine, "make_live_engine", fake_make_live_engine)
+    assert (
+        scenario.main(
+            [
+                "run",
+                str(session),
+                "1",
+                "--profiles-dir",
+                str(profiles),
+                "--managed",
+                "--hitl-pause-sec",
+                "2.5",
+                "--generic-checks",
+            ]
+        )
+        == 1
+    )
+    assert options["hitl_pause_timeout_sec"] == 2.5
+    assert options["generic_verifier"] is True
 
 
 class _NewsroomModel:

@@ -249,8 +249,17 @@ def test_default_run_uses_live_factory_and_preserves_pending_state(
     module = ModuleType("ui.scenario_engine")
     attempts = []
 
-    def make_live_engine(*, max_rounds, max_task_tokens, max_output_tokens):
+    def make_live_engine(
+        *,
+        max_rounds,
+        max_task_tokens,
+        max_output_tokens,
+        hitl_pause_timeout_sec=0.0,
+        generic_verifier=False,
+    ):
         assert (max_rounds, max_task_tokens, max_output_tokens) == expected
+        assert hitl_pause_timeout_sec == 0.0
+        assert generic_verifier is False
 
         async def live_engine(request, human, emit):
             attempts.append(request.run_id)

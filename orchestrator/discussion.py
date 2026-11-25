@@ -38,6 +38,7 @@ class RoundRobinDiscussionEngine:
         prompt_token_counter: TokenCounter = estimate_tokens,
         max_search_calls_per_turn: int = 2,
         hitl_pause_timeout_sec: float = 0.0,
+        require_all_artifacts: bool = False,
     ) -> None:
         self._tools = {tool.name: tool.model_copy(deep=True) for tool in tool_definitions}
         if len(self._tools) != len(tool_definitions):
@@ -59,6 +60,7 @@ class RoundRobinDiscussionEngine:
         if not math.isfinite(hitl_pause_timeout_sec) or hitl_pause_timeout_sec < 0:
             raise ValueError("hitl_pause_timeout_sec must be finite and non-negative")
         self._hitl_pause = hitl_pause_timeout_sec
+        self._require_all_artifacts = require_all_artifacts
         self._delivery_mode = False
         self._repair = False
         self._delivery_artifacts: dict[str, tuple[str, ...]] = {}
@@ -174,6 +176,7 @@ class RoundRobinDiscussionEngine:
                             delivery_mode=self._delivery_mode,
                             repair=self._repair,
                             required_artifacts=self._delivery_artifacts.get(speaker, ()),
+                            require_all_artifacts=self._require_all_artifacts,
                         )
                 except SpeakerStopped as exc:
                     return finish(exc.reason)

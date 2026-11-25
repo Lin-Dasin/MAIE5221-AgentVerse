@@ -1,7 +1,9 @@
 """Run Mid Test with deterministic checks and Role A's bounded rework loop."""
 
+import ast
 import asyncio
 import json
+import re
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -19,7 +21,15 @@ from harness import (
 from harness.verdict import FileVerifier
 from memory.scenario_memory import ScenarioMemory
 from orchestrator.artifacts import archive_path, copy_file, inside
-from protocol.models import AgentProfile, ExecutionContext, RunConfig, ToolCall, ToolResult
+from protocol.models import (
+    AcceptanceRule,
+    AgentProfile,
+    CriticResult,
+    ExecutionContext,
+    RunConfig,
+    ToolCall,
+    ToolResult,
+)
 from protocol.ports import ModelClient, ToolExecutor
 from ui.scenario import TaskEngine, TaskRequest, _require_unlinked, file_sha256
 from ui.scenario_engine import (
@@ -47,6 +57,13 @@ SLIDES = "fund-slides"
 BOOKING = "booking-app"
 DASHBOARD = "usage-dashboard"
 RECORDED_SEARCH = "inputs/recorded-search-results.json"
+_ARTIFACT_PATTERN = re.compile(
+    r"outputs/[A-Za-z0-9][A-Za-z0-9_.\-/]*\.(?:md|txt|py|json|html|csv|svg|pdf|xlsx)",
+    re.IGNORECASE,
+)
+_RESEARCH_HINT = re.compile(
+    r"\bresearch\b|\bsearch\b|\binvestigate\b|调研|检索", re.IGNORECASE
+)
 
 _LESSON_RULES = (
     (
@@ -164,9 +181,95 @@ def _inject_memory(
     return recalled
 
 
+def _declared_artifacts(task_text: str) -> list[str]:
+    found: list[str] = []
+    for match in _ARTIFACT_PATTERN.finditer(task_text):
+        path = match.group(0)
+        if path not in found:
+            found.append(path)
+    return found[:8]
+
+
+def _generic_requirements(
+    request: TaskRequest,
+    speakers: list[str],
+    profiles: dict[str, AgentProfile],
+    number: int,
+):
+    from protocol.delivery import DeliveryRequirement
+
+    artifacts = _declared_artifacts(request.task.text) or [f"outputs/task-{number}.md"]
+    owner = next(
+        (speaker for speaker in reversed(speakers) if "file_write" in profiles[speaker].tools),
+        None,
+    )
+    if owner is None:
+        raise ValueError("Generic managed tasks require a speaker with file_write")
+    return [
+        DeliveryRequirement(
+            requirement_id=f"task-{number}",
+            owner=owner,
+            description=request.task.text[:4000],
+            artifacts=artifacts,
+            rules=[AcceptanceRule(type="file_exists", path=path) for path in artifacts],
+            review_required=False,
+        )
+    ]
+
+
+class _GenericFileVerifier(FileVerifier):
+    """File presence plus non-empty and .py/.json syntax checks; no Mid rules."""
+
+    async def check(self, rules, root):
+        base = await super().check(rules, root)
+        defects = list(base.defects)
+        extra = 0
+        for rule in rules:
+            if rule.type != "file_exists":
+                continue
+            target = Path(root) / rule.path
+            if not target.is_file():
+                continue
+            if target.stat().st_size == 0:
+                defects.append(f"empty_artifact: {rule.path}")
+                extra += 1
+                continue
+            try:
+                text = target.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                defects.append(f"invalid_utf8: {rule.path}")
+                extra += 1
+                continue
+            suffix = target.suffix.lower()
+            if suffix == ".py":
+                try:
+                    ast.parse(text)
+                except SyntaxError as exc:
+                    defects.append(
+                        f"syntax_error: {rule.path} line {exc.lineno}: {exc.msg}"
+                    )
+                    extra += 1
+            elif suffix == ".json":
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError as exc:
+                    defects.append(
+                        f"syntax_error: {rule.path} line {exc.lineno}: {exc.msg}"
+                    )
+                    extra += 1
+        return CriticResult(
+            passed=not defects,
+            checks_total=base.checks_total,
+            checks_passed=max(0, base.checks_passed - extra),
+            defects=defects,
+        )
+
+
 def validate_managed_task(scenario_id: str, number: int) -> None:
-    if scenario_id not in {NEWSROOM, FUND, SOFTWARE} or number not in {1, 2}:
-        raise ValueError("Managed checks are available for software, newsroom and fund Tasks 1–2")
+    if number not in (1, 2):
+        raise ValueError("Managed checks are available for task 1 or 2")
+    if not scenario_id or not str(scenario_id).strip():
+        raise ValueError("A scenario ID is required")
 
 
 def _requirements(
@@ -681,6 +784,156 @@ def _stage_verified(
     return candidates
 
 
+def _generic_managed_engine(
+    model: ModelClient,
+    *,
+    scenario_id: str,
+    number: int,
+    max_rounds: int,
+    max_task_tokens: int,
+    max_output_tokens: int,
+    max_rework_rounds: int,
+    hitl_pause_timeout_sec: float,
+) -> TaskEngine:
+    """Generic managed path: no Mid-specific verifier, pre-search or scenario policy."""
+    from orchestrator.delivery import DeliveryDiscussionRunner
+    from orchestrator.discussion import RoundRobinDiscussionEngine
+    from protocol.delivery import DeliveryPlan
+
+    async def run(
+        request: TaskRequest, human: Callable[[], str | None], emit: Callable[[str, str], None]
+    ) -> None:
+        if request.task.task_id != f"task-{number}":
+            raise ValueError("Managed scenario policy does not match the current task")
+        config, executor = _prepare_discussion(
+            request,
+            max_rounds=max_rounds,
+            max_task_tokens=max_task_tokens,
+            max_output_tokens=max_output_tokens,
+        )
+        profiles = dict(request.profiles)
+        requirements = _generic_requirements(
+            request, config.speakers, profiles, number
+        )
+        workspaces = {
+            speaker: executor.workspace(speaker).resolve() for speaker in config.speakers
+        }
+        history = _history(request)
+        plan = DeliveryPlan(
+            goal=config.goal,
+            human_instructions=[
+                event.content for event in history if event.role == "user"
+            ],
+            requirements=requirements,
+            max_rework_rounds=max_rework_rounds,
+        )
+        engine = RoundRobinDiscussionEngine(
+            _file_tools(executor, request.inputs),
+            hitl_pause_timeout_sec=hitl_pause_timeout_sec,
+            require_all_artifacts=True,
+        )
+        runner = DeliveryDiscussionRunner(
+            engine,
+            _GenericFileVerifier(),
+            reviewer=None,
+            check_timeout_sec=30,
+            snapshot_root=request.workspace / "snapshots",
+        )
+
+        async def publish(turn: "DiscussionTurn") -> None:
+            _share_outputs(request, executor, turn.speaker)
+            emit(turn.speaker, turn.content)
+
+        session_dir = _session_dir(request.workspace)
+        memory = ScenarioMemory(session_dir)
+        recalled = _inject_memory(
+            profiles, memory, request.task.task_id, request.task.text
+        )
+        result = await runner.run(
+            config,
+            plan=plan,
+            workspaces=workspaces,
+            profiles=profiles,
+            history=history,
+            model=model,
+            executor=executor,
+            human=_HumanInput(human),
+            emit=publish,
+        )
+        written: dict[str, list[str]] = {}
+        for agent_id in request.profiles:
+            lessons = _distill_lessons(
+                agent_id, result, set(request.profiles[agent_id].tools)
+            )
+            entry = memory.write(
+                agent_id,
+                task_id=request.task.task_id,
+                outcome=result.status,
+                lessons=lessons,
+            )
+            written[agent_id] = [entry.entry_id]
+            memory.log_event(
+                "memory_write", agent_id, request.task.task_id, [entry.entry_id]
+            )
+        search_calls = 0
+        search_with_results = 0
+        hitl_triggers = 0
+        for attempt in result.attempts:
+            for turn in attempt.turns:
+                hitl_triggers += int("[HITL]" in turn.content)
+                for call, outcome in zip(turn.tool_calls, turn.tool_results, strict=True):
+                    if call.name != "web_search" or not outcome.ok:
+                        continue
+                    search_calls += 1
+                    data = outcome.data
+                    if (
+                        isinstance(data, dict)
+                        and data.get("provider") == "tavily"
+                        and isinstance(data.get("results"), list)
+                        and any(
+                            isinstance(row, dict) and isinstance(row.get("url"), str)
+                            for row in data["results"]
+                        )
+                    ):
+                        search_with_results += 1
+        research_required = bool(_RESEARCH_HINT.search(request.task.text))
+        candidates = _stage_verified(request, workspaces, result)
+        summary = {
+            "mode": "managed",
+            "kind": "generic",
+            "scenario_id": scenario_id,
+            "status": result.status,
+            "stop_reason": result.stop_reason,
+            "tokens": result.tokens,
+            "model_calls": result.model_calls,
+            "assessments": [item.model_dump(mode="json") for item in result.assessments],
+            "attempts": [
+                item.model_dump(mode="json", exclude={"turns"}) | {"turns": len(item.turns)}
+                for item in result.attempts
+            ],
+            "candidates": candidates,
+            "memory": {"recalled": recalled, "written": written},
+            "hitl_triggers": hitl_triggers,
+            "generic_checks": {
+                "research_required": research_required,
+                "search_calls": search_calls,
+                "search_ok": not research_required or search_with_results > 0,
+            },
+        }
+        location = request.workspace / "discussion-summary.json"
+        location.write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        print(f"Managed checks: {result.status} ({result.stop_reason}). Attempt: {request.run_id}")
+        print(f"Discussion summary: {location}")
+        if candidates:
+            print("Review the full candidate set before accepting:")
+            for path in candidates:
+                print(f"  {path}")
+
+    return run
+
+
 def managed_discussion_engine(
     model: ModelClient,
     *,
@@ -689,14 +942,26 @@ def managed_discussion_engine(
     max_rounds: int = 1,
     max_task_tokens: int = 60_000,
     max_output_tokens: int = 2_048,
-    max_rework_rounds: int = 2,
+    max_rework_rounds: int = 3,
     hitl_pause_timeout_sec: float = 0.0,
+    generic_verifier: bool = False,
 ) -> TaskEngine:
     """Stage the exact model-produced bytes after all deterministic checks pass."""
     from orchestrator.delivery import DeliveryDiscussionRunner
     from orchestrator.discussion import RoundRobinDiscussionEngine
     from protocol.delivery import DeliveryPlan
 
+    if generic_verifier or scenario_id not in {SOFTWARE, NEWSROOM, FUND}:
+        return _generic_managed_engine(
+            model,
+            scenario_id=scenario_id,
+            number=number,
+            max_rounds=max_rounds,
+            max_task_tokens=max_task_tokens,
+            max_output_tokens=max_output_tokens,
+            max_rework_rounds=max_rework_rounds,
+            hitl_pause_timeout_sec=hitl_pause_timeout_sec,
+        )
     validate_managed_task(scenario_id, number)
     today = date.today()
     requirements = _requirements(scenario_id, number, today)
@@ -969,6 +1234,11 @@ def managed_discussion_engine(
             ],
             "candidates": candidates,
             "memory": {"recalled": recalled, "written": written},
+            "hitl_triggers": sum(
+                "[HITL]" in turn.content
+                for attempt in result.attempts
+                for turn in attempt.turns
+            ),
         }
         if source_owner is not None:
             summary["search_evidence"] = {

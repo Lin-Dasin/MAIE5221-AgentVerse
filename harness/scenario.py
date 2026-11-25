@@ -34,14 +34,16 @@ class ScenarioTask(Contract):
 class ScenarioSpec(Contract):
     scenario_id: Identifier
     title: str = Field(min_length=1)
-    roles: tuple[RoleSpec, ...] = Field(min_length=4, max_length=4)
+    roles: tuple[RoleSpec, ...] = Field(min_length=2, max_length=8)
     tasks: tuple[ScenarioTask, ScenarioTask]
 
     @model_validator(mode="after")
     def validate_team_and_tasks(self) -> Self:
         members = {role.agent_id for role in self.roles}
-        if len(members) != 4 or INSTRUCTOR in members:
-            raise ValueError("Expected four distinct agent IDs, separate from instructor")
+        if len(members) != len(self.roles) or len(members) < 2 or INSTRUCTOR in members:
+            raise ValueError(
+                "Expected at least two distinct agent IDs, separate from instructor"
+            )
         first, second = self.tasks
         if (first.task_id, second.task_id) != ("task-1", "task-2"):
             raise ValueError("Expected task-1 followed by task-2")
@@ -128,7 +130,7 @@ def load_scenario_profiles(scenario: ScenarioSpec, profiles_dir: Path) -> dict[s
     if policy is not None:
         if members != policy.roles.keys():
             raise ValueError(
-                f"Tool policy for {scenario.scenario_id} must match the four teacher IDs; "
+                f"Tool policy for {scenario.scenario_id} must match the scenario IDs; "
                 f"missing={sorted(members - policy.roles.keys())}, "
                 f"unexpected={sorted(policy.roles.keys() - members)}"
             )

@@ -135,7 +135,7 @@ def test_mismatched_policy_reports_role_ids(tmp_path):
 @pytest.mark.parametrize("last_agent", ["instructor", "qa"])
 def test_roles_are_distinct_from_each_other_and_the_human(tmp_path, last_agent):
     directory = write_scenario(tmp_path, "scenario_1", ("lead", "dev", "qa", last_agent))
-    with pytest.raises(ValueError, match="four distinct agent IDs"):
+    with pytest.raises(ValueError, match="at least two distinct agent IDs"):
         load_scenario(directory)
 
 
