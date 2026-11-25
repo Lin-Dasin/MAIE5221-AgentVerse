@@ -163,6 +163,43 @@ async def speak(
             return excerpt(progress_view([snapshot("Pending")]), 500)
         return ""
 
+    def written_paths() -> set[str]:
+        return {
+            path
+            for call, result in zip(calls, results, strict=True)
+            if result.ok
+            and call.name in WRITE_TOOLS
+            and (path := output_path(call.arguments.get("path"))) is not None
+        }
+
+    def present_paths() -> set[str]:
+        workspace_getter = getattr(executor, "workspace", None)
+        try:
+            workspace = (
+                workspace_getter(profile.agent_id) if callable(workspace_getter) else None
+            )
+            if workspace is None:
+                return set()
+            return {path for path in required_artifacts if (workspace / path).is_file()}
+        except (AttributeError, OSError, TypeError):
+            return set()
+
+    def all_required_ready() -> bool:
+        if not (managed and required_artifacts and require_all_artifacts):
+            return False
+        written = written_paths()
+        present = present_paths()
+        return all(path in written or path in present for path in required_artifacts)
+
+    def missing_required() -> list[str]:
+        written = written_paths()
+        present = present_paths()
+        return [
+            path
+            for path in required_artifacts
+            if path not in written and path not in present
+        ]
+
     async def close() -> DiscussionTurn:
         turn = snapshot("No model report available.")
         try:
@@ -224,10 +261,20 @@ async def speak(
             tool for tool in offered if tool.name != "web_search" or search_calls < max_search_calls
         ]
         if provisional_reply:
-            reminder = ChatMessage(
-                role="user",
-                content=(
-                    f"Your tentative reply: {excerpt(provisional_reply, 1200)}\n"
+            missing = missing_required()
+            if (
+                require_all_artifacts
+                and required_artifacts
+                and missing
+                and (written_paths() or present_paths())
+            ):
+                missing_text = (
+                    f"Missing required artifacts: {', '.join(missing)}. "
+                    "You must create these exact files with file_write or file_patch "
+                    "before finishing."
+                )
+            else:
+                missing_text = (
                     "No successful file write via file_write/file_patch has been recorded "
                     "in this contribution. If code_exec already created files, "
                     "inspect and report those actual artifacts. "
@@ -236,6 +283,12 @@ async def speak(
                     "file_write/file_patch. Do not merely announce future work. If essential "
                     "human input is missing, report that blocker explicitly; never invent "
                     "the answer."
+                )
+            reminder = ChatMessage(
+                role="user",
+                content=(
+                    f"Your tentative reply: {excerpt(provisional_reply, 1200)}\n"
+                    + missing_text
                 ),
             )
             messages.append(reminder)
@@ -258,15 +311,19 @@ async def speak(
                 step=step,
                 max_steps=max_steps,
                 repair=repair,
-                wrote=any(
-                    result.ok
-                    and call.name in WRITE_TOOLS
-                    and output_path(call.arguments.get("path")) is not None
-                    and (
-                        not required_artifacts
-                        or output_path(call.arguments.get("path")) in required_artifacts
+                wrote=(
+                    all_required_ready()
+                    if require_all_artifacts and required_artifacts
+                    else any(
+                        result.ok
+                        and call.name in WRITE_TOOLS
+                        and output_path(call.arguments.get("path")) is not None
+                        and (
+                            not required_artifacts
+                            or output_path(call.arguments.get("path")) in required_artifacts
+                        )
+                        for call, result in zip(calls, results, strict=True)
                     )
-                    for call, result in zip(calls, results, strict=True)
                 ),
                 needs_production=bool(length_failures or provisional_reply or invalid_text_retries),
                 inspection_spent=inspection_spent,
@@ -407,22 +464,8 @@ async def speak(
                 and (path := output_path(call.arguments.get("path"))) is not None
             }
             if managed and required_artifacts:
-                workspace_getter = getattr(executor, "workspace", None)
-                try:
-                    workspace = (
-                        workspace_getter(profile.agent_id)
-                        if callable(workspace_getter)
-                        else None
-                    )
-                    present = (
-                        {path for path in required_artifacts if (workspace / path).is_file()}
-                        if workspace is not None
-                        else set()
-                    )
-                except (AttributeError, OSError, TypeError):
-                    present = set()
                 performed_work = (
-                    all(path in written or path in present for path in required_artifacts)
+                    all_required_ready()
                     if require_all_artifacts
                     else bool(written.intersection(required_artifacts))
                 )

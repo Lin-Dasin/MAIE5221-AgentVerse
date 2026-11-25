@@ -56,9 +56,9 @@ BOOKING_GUIDANCE = (
 DASHBOARD_GUIDANCE = (
     f"Deliver {DASHBOARD_ARTIFACT} and {DASHBOARD_GUIDE_ARTIFACT}. Start the dashboard with "
     "--host, --port and --db. "
-    f"Write the short {DASHBOARD_GUIDE_ARTIFACT} first with both launch commands, "
-    "separate ports, the browser URL, date selection and what the summaries mean. "
-    f"Then save {DASHBOARD_ARTIFACT} with a separate file_write. Save both before extras. "
+    f"Write {DASHBOARD_ARTIFACT} first with file_write and run code_exec to self-test it; "
+    f"then write {DASHBOARD_GUIDE_ARTIFACT} with the launch commands, separate ports, "
+    "browser URL, date selection and what the summaries mean. Save both before extras. "
     "In rework, keep passing files and write the missing or reported artifact first. "
     "Use the standard library and the same SQLite database as the "
     "accepted inputs/dev/booking_app.py. Do not change the accepted app or replace its records "

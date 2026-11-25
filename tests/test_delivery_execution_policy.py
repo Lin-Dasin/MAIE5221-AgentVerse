@@ -7,7 +7,7 @@ import pytest
 from orchestrator.delivery import _repair_allowance
 from orchestrator.discussion import RoundRobinDiscussionEngine
 from protocol.delivery import DeliveryPlan
-from protocol.models import ModelResponse, ToolCall
+from protocol.models import AcceptanceRule, ModelResponse, ToolCall
 from runtime.client import ModelOutputLimitError
 from sandbox.executor import RegisteredTool, SandboxToolExecutor
 from tests.helpers import profile
@@ -33,6 +33,35 @@ def test_repair_allowance_never_splits_below_a_workable_turn():
     assert _repair_allowance(36_000, 2) == 25_000
     assert _repair_allowance(10_000, 3) == 10_000
     assert _repair_allowance(36_000, 0) == 36_000
+
+
+async def test_all_required_artifacts_keep_produce_phase_and_name_missing_file(tmp_path):
+    requirements = [
+        requirement(
+            artifacts=["outputs/a.md", "outputs/b.py"],
+            rules=[
+                AcceptanceRule(type="file_exists", path="outputs/a.md"),
+                AcceptanceRule(type="file_exists", path="outputs/b.py"),
+            ],
+        )
+    ]
+    runner, config, args = setup(tmp_path, requirements=requirements, require_all_artifacts=True)
+    model = ScriptedModel(
+        call("file_write", 1, path="outputs/a.md", text="A"),
+        reply("I think the writing is done."),
+        call("file_write", 2, path="outputs/b.py", text="B"),
+        reply("Both required files are saved."),
+    )
+
+    result = await runner.run(config, **args, model=model)
+
+    assert result.status == "passed"
+    assert any(
+        "outputs/b.py" in message.content
+        for messages, _, _ in model.requests[1:]
+        for message in messages
+    )
+    assert "file_write" in {tool.name for tool in model.requests[1][1]}
 
 
 async def managed_run(tmp_path, model, *, repair=False, max_steps=8):
