@@ -29,6 +29,7 @@ from runtime.discussion_delivery_policy import (
     HANDOFF_OUTPUT_TOKENS,
     INSPECTION_CALL_LIMITS,
     PRODUCTION_TOOLS,
+    WRITE_TOOLS,
     call_limit,
     delivery_step,
     output_path,
@@ -197,7 +198,7 @@ async def speak(
             writes = [
                 {"path": call.arguments.get("path"), "ok": True}
                 for call, result in zip(calls, results, strict=True)
-                if call.name == "file_write" and result.ok
+                if call.name in WRITE_TOOLS and result.ok
             ]
             receipt = ChatMessage(
                 role="user",
@@ -227,13 +228,14 @@ async def speak(
                 role="user",
                 content=(
                     f"Your tentative reply: {excerpt(provisional_reply, 1200)}\n"
-                    "No successful file write via file_write has been recorded "
+                    "No successful file write via file_write/file_patch has been recorded "
                     "in this contribution. If code_exec already created files, "
                     "inspect and report those actual artifacts. "
                     "Use the remaining opportunity to produce, inspect or repair the requested "
                     "deliverable in your role. For a text deliverable, save a useful draft with "
-                    "file_write. Do not merely announce future work. If essential human input "
-                    "is missing, report that blocker explicitly; never invent the answer."
+                    "file_write/file_patch. Do not merely announce future work. If essential "
+                    "human input is missing, report that blocker explicitly; never invent "
+                    "the answer."
                 ),
             )
             messages.append(reminder)
@@ -258,7 +260,7 @@ async def speak(
                 repair=repair,
                 wrote=any(
                     result.ok
-                    and call.name == "file_write"
+                    and call.name in WRITE_TOOLS
                     and output_path(call.arguments.get("path")) is not None
                     and (
                         not required_artifacts
@@ -287,7 +289,7 @@ async def speak(
                 ChatMessage(
                     role="user",
                     content=policy.instruction
-                    + " Direct file_write calls must save under outputs/. "
+                    + " Direct file_write/file_patch calls must save under outputs/. "
                     + (
                         "Verification reads reopen only after writing a declared target: "
                         + json.dumps(list(required_artifacts))
@@ -319,7 +321,7 @@ async def speak(
                 and (
                     step > delivery_started
                     or any(
-                        result.ok and call.name == "file_write"
+                        result.ok and call.name in WRITE_TOOLS
                         for call, result in zip(calls, results, strict=True)
                     )
                 )
@@ -401,7 +403,7 @@ async def speak(
                 path
                 for call, result in zip(calls, results, strict=True)
                 if result.ok
-                and call.name == "file_write"
+                and call.name in WRITE_TOOLS
                 and (path := output_path(call.arguments.get("path"))) is not None
             }
             if managed and required_artifacts:
@@ -426,7 +428,7 @@ async def speak(
                 )
             else:
                 performed_work = any(
-                    result.ok and call.name == "file_write"
+                    result.ok and call.name in WRITE_TOOLS
                     for call, result in zip(calls, results, strict=True)
                 )
             if (
@@ -434,7 +436,7 @@ async def speak(
                 and step < max_steps - 1
                 and provisional_reply is None
                 and not performed_work
-                and any(tool.name == "file_write" for tool in active_tools)
+                and any(tool.name in WRITE_TOOLS for tool in active_tools)
             ):
                 provisional_reply = response.content
                 continue
@@ -463,7 +465,7 @@ async def speak(
             active_names = {tool.name for tool in active_tools}
             if (
                 managed
-                and call.name == "file_write"
+                and call.name in WRITE_TOOLS
                 and output_path(call.arguments.get("path")) is None
             ):
                 result = ToolResult(

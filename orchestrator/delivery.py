@@ -380,7 +380,8 @@ class DeliveryDiscussionRunner:
                         item.defects.append(
                             "no_artifact_progress: declared deliverable bytes did not change "
                             "during this repair (missing files remain missing). Read the exact "
-                            "target/candidate once, then persist a targeted fix with file_write; "
+                            "target/candidate once, then persist a targeted fix with "
+                            "file_write or file_patch; "
                             "do not repeat directory discovery or claim an unsaved correction."
                         )
             if watched_human.messages:

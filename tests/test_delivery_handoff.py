@@ -229,6 +229,20 @@ def test_verified_footer_requires_code_exec_after_the_last_write():
     assert status_footer(turn).startswith("[Verified")
 
 
+def test_patch_is_treated_as_a_write_in_the_handoff_footer():
+    turn = _turn(
+        (
+            ToolCall(
+                call_id="p",
+                name="file_patch",
+                arguments={"path": "outputs/app.py", "old_text": "a", "new_text": "b"},
+            ),
+            ToolResult(ok=True, data={"path": "outputs/app.py"}),
+        )
+    )
+    assert status_footer(turn).startswith("[Unverified: no successful code_exec")
+
+
 async def test_global_budget_exhausted_by_report_cannot_start_next_member(tmp_path):
     runner, config, args = setup(
         tmp_path, requirements=[requirement(), requirement("editor")], max_steps_per_turn=2

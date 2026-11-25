@@ -96,7 +96,8 @@ async def test_newsroom_candidate_sharing_and_accepted_handoff(tmp_path):
         first_offer = next(
             names for messages, names in first.requests if f"You are {role}." in messages[0].content
         )
-        assert first_offer == set(allowed)
+        expected = set(allowed) | ({"file_patch"} if "file_write" in allowed else set())
+        assert first_offer == expected
 
     task = session / "tasks/task-1"
     (attempt,) = (task / "attempts").iterdir()

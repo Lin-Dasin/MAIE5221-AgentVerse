@@ -59,6 +59,10 @@ def _file_tools(executor: SandboxToolExecutor, inputs: tuple[str, ...]) -> list[
             "read them at inputs/shared/<your agent id>/<path relative to outputs/>. "
             "Include the exact shared paths in your public handoff."
         ),
+        "file_patch": (
+            " Patch one exact, uniquely occurring text block in an outputs/ file. Read the "
+            "target region with file_read first; never patch an ambiguous block."
+        ),
     }
     if inputs:
         paths = json.dumps([f"inputs/{path}" for path in inputs], ensure_ascii=False)

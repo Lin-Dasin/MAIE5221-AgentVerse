@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from datetime import date
 
 from protocol.models import DiscussionTurn
+from runtime.discussion_delivery_policy import WRITE_TOOLS
 
 
 def phase_instruction(round_number: int, max_rounds: int) -> str:
@@ -44,7 +45,8 @@ def phase_instruction(round_number: int, max_rounds: int) -> str:
         "available dependencies; run short tests, not a persistent server, in code_exec. "
         "Use exact candidate paths below instead of repeatedly listing directories. "
         "Do not use code_exec merely to print whole source files. Before finishing, "
-        "persist your contribution with file_write: implementation, article, review findings "
+        "persist your contribution with file_write or file_patch: implementation, "
+        "article, review findings "
         "or release instructions as appropriate to your role. "
         "When handing off, name the actual files, interfaces and checks. A valid public "
         "text deliverable is also useful, but a promise to create one is not."
@@ -57,7 +59,7 @@ def progress_view(turns: Sequence[DiscussionTurn]) -> str:
     for turn in turns:
         for call, result in zip(turn.tool_calls, turn.tool_results, strict=True):
             data = result.data if isinstance(result.data, dict) else {}
-            if result.ok and call.name == "file_write" and isinstance(data.get("path"), str):
+            if result.ok and call.name in WRITE_TOOLS and isinstance(data.get("path"), str):
                 path = data["path"]
                 entries[(turn.speaker, path)] = (
                     f"{turn.speaker}: wrote {path[:200]} (candidate; quality not verified). "

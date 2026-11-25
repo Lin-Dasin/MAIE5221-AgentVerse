@@ -111,7 +111,7 @@ async def test_list_returns_entries(tmp_path: Path) -> None:
 def test_file_tools_are_registered() -> None:
     registry = build()
     names = {tool.definition.name for tool in registry.values()}
-    assert {"file_read", "file_write", "file_list", "file_delete"} <= names
+    assert {"file_read", "file_write", "file_patch", "file_list", "file_delete"} <= names
     assert registry["file_delete"].definition.requires_approval is True
 
 
@@ -126,6 +126,62 @@ async def test_large_file_is_truncated(tmp_path: Path) -> None:
     assert result.data["truncated"] is True
     assert len(result.data["text"]) < len(payload)
     assert "truncated 500 characters" in result.data["text"]
+
+
+async def test_file_patch_requires_one_unique_match_and_checks_syntax(tmp_path: Path) -> None:
+    executor = make_executor(tmp_path)
+    await call(executor, "file_write", path="outputs/app.py", text="value = 1\n")
+
+    patched = await call(
+        executor,
+        "file_patch",
+        path="outputs/app.py",
+        old_text="value = 1",
+        new_text="value = 2",
+    )
+    assert patched.ok is True
+    assert patched.data["replacements"] == 1
+    assert patched.data["syntax_ok"] is True
+    assert (tmp_path / "workspaces/writer/outputs/app.py").read_text() == "value = 2\n"
+
+    missing = await call(
+        executor, "file_patch", path="outputs/app.py", old_text="missing", new_text="x"
+    )
+    assert missing.ok is False and "not found" in (missing.error or "")
+
+    await call(executor, "file_write", path="outputs/dupe.txt", text="same same")
+    ambiguous = await call(
+        executor, "file_patch", path="outputs/dupe.txt", old_text="same", new_text="different"
+    )
+    assert ambiguous.ok is False and "2 locations" in (ambiguous.error or "")
+
+    broken = await call(
+        executor,
+        "file_patch",
+        path="outputs/app.py",
+        old_text="value = 2",
+        new_text="def broken(:",
+    )
+    assert broken.ok is True
+    assert broken.data["syntax_ok"] is False and broken.data["syntax_line"] == 1
+
+    escaped = await call(
+        executor, "file_patch", path="../escape.py", old_text="x", new_text="y"
+    )
+    assert escaped.ok is False and "escapes workspace" in (escaped.error or "")
+
+
+async def test_file_read_supports_one_based_line_ranges(tmp_path: Path) -> None:
+    executor = make_executor(tmp_path)
+    await call(executor, "file_write", path="outputs/lines.txt", text="a\nb\nc\nd\n")
+
+    result = await call(
+        executor, "file_read", path="outputs/lines.txt", start_line=2, end_line=3
+    )
+    assert result.ok is True
+    assert result.data["text"] == "b\nc\n"
+    assert result.data["total_lines"] == 4
+    assert result.data["start_line"] == 2 and result.data["end_line"] == 3
 
 
 async def test_binary_file_is_rejected(tmp_path: Path) -> None:

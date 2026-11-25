@@ -5,7 +5,8 @@ from pathlib import PurePosixPath
 
 from protocol.models import ToolDefinition
 
-PRODUCTION_TOOLS = frozenset({"file_write", "code_exec"})
+PRODUCTION_TOOLS = frozenset({"file_write", "file_patch", "code_exec"})
+WRITE_TOOLS = frozenset({"file_write", "file_patch"})
 INSPECTION_CALL_LIMITS = {"file_list": 2, "file_read": 6}
 HANDOFF_OUTPUT_TOKENS = 1024
 
@@ -85,13 +86,14 @@ def delivery_step(
             or (phase == "produce" and allow_search and tool.name == "web_search")
         ]
         instruction = (
-            "PRODUCE: inspection is closed for this contribution. Use file_write to persist "
+            "PRODUCE: inspection is closed for this contribution. Use file_write or "
+            "file_patch to persist "
             "the draft or defect fix at the exact required path; code_exec may implement/test "
             "with existing evidence. Prefer small complete files; file_write replaces a file. "
             "Do not list/read "
             "directories again or merely promise a fix. If essential evidence or human input "
             "is unavailable, report the specific blocker; never invent it. "
-            "After a successful file_write, bounded file_read checks reopen."
+            "After a successful write, bounded file_read checks reopen."
         )
         if any(tool.name == "web_search" for tool in selected):
             instruction += (
@@ -104,7 +106,8 @@ def delivery_step(
                 "web_search before production. Search only the missing evidence, cite returned "
                 "URLs, and distinguish excerpts from full sources. Directory listings and more "
                 "local reads are closed. You may instead save the repair now. The next step "
-                "prioritises file_write/code_exec; do not postpone writing or invent evidence."
+                "prioritises file_write/file_patch/code_exec; do not postpone writing or "
+                "invent evidence."
             )
         cap = output_cap
     else:

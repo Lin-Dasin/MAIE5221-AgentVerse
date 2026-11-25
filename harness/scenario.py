@@ -20,6 +20,11 @@ _POLICY_SCENARIOS = {
 }
 
 
+def _with_patch(tools: list[str]) -> list[str]:
+    """Every write-capable scenario role may use the bounded patch tool."""
+    return list(dict.fromkeys([*tools, "file_patch"])) if "file_write" in tools else list(tools)
+
+
 class RoleSpec(Contract):
     agent_id: Identifier
     role_label: str = Field(min_length=1)
@@ -143,7 +148,7 @@ def load_scenario_profiles(scenario: ScenarioSpec, profiles_dir: Path) -> dict[s
                 agent_id=role.agent_id,
                 role="worker",
                 system_prompt=role.system_prompt,
-                tools=policy.roles[role.agent_id],
+                tools=_with_patch(policy.roles[role.agent_id]),
             )
             for role in scenario.roles
         }
@@ -155,7 +160,10 @@ def load_scenario_profiles(scenario: ScenarioSpec, profiles_dir: Path) -> dict[s
         )
     return {
         role.agent_id: profiles[role.agent_id].model_copy(
-            update={"system_prompt": role.system_prompt}
+            update={
+                "system_prompt": role.system_prompt,
+                "tools": _with_patch(profiles[role.agent_id].tools),
+            }
         )
         for role in scenario.roles
     }

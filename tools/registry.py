@@ -13,10 +13,12 @@ from tools.code_exec import CODE_EXEC, run_code
 from tools.fs import (
     FILE_DELETE,
     FILE_LIST,
+    FILE_PATCH,
     FILE_READ,
     FILE_WRITE,
     delete_file,
     list_dir,
+    patch_file,
     read_file,
     write_file,
 )
@@ -36,6 +38,11 @@ def build() -> dict[str, RegisteredTool]:
             definition=FILE_WRITE,
             handler=write_file,
             required=("path", "text"),
+        ),
+        FILE_PATCH.name: RegisteredTool(
+            definition=FILE_PATCH,
+            handler=patch_file,
+            required=("path", "old_text", "new_text"),
         ),
         FILE_LIST.name: RegisteredTool(
             definition=FILE_LIST,

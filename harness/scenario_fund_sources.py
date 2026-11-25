@@ -4,6 +4,7 @@ import re
 from collections.abc import Mapping, Sequence
 from datetime import date
 from decimal import Decimal
+from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 from unicodedata import normalize
@@ -499,3 +500,78 @@ def check_citations(
                 f"its claim and link in {artifact}."
             )
     return defects
+
+
+_MARKER_START = "<!-- verified-evidence:start -->"
+_MARKER_END = "<!-- verified-evidence:end -->"
+_VERIFIED_SECTION = re.compile(
+    re.escape(_MARKER_START) + r".*?" + re.escape(_MARKER_END), re.S
+)
+
+
+def attach_verified_evidence(html: str, claims: Sequence[ResearchClaim]) -> str:
+    """Render a deterministic, visible evidence slide and replace it on later writes."""
+    if not claims:
+        return html
+    items = []
+    for item in claims:
+        published = (
+            f' <span class="source-date">Published {escape(item.source_date.isoformat())}</span>'
+            if item.source_date is not None
+            else ""
+        )
+        items.append(
+            "<li>"
+            f"{escape(item.claim)}"
+            f"{published} "
+            f'<a href="{escape(item.source_url, quote=True)}" target="_blank" rel="noopener">'
+            "Source</a>"
+            "</li>"
+        )
+    section = (
+        f"{_MARKER_START}\n"
+        '<section id="verified-evidence">\n'
+        "<h2>Verified evidence</h2>\n"
+        "<ul>\n"
+        + "\n".join(items)
+        + "\n</ul>\n"
+        "</section>\n"
+        f"{_MARKER_END}"
+    )
+    if _VERIFIED_SECTION.search(html):
+        return _VERIFIED_SECTION.sub(section, html, count=1)
+    nav_link = '<a href="#verified-evidence">Verified evidence</a>'
+    if re.search(r"<nav\b", html, re.I):
+        if 'href="#verified-evidence"' not in html:
+            html = re.sub(
+                r"</nav\s*>",
+                f"{nav_link}\n</nav>",
+                html,
+                count=1,
+                flags=re.I,
+            )
+    else:
+        section = section.replace(
+            "<h2>Verified evidence</h2>",
+            f'<h2>{nav_link}</h2>',
+        )
+    for closing in ("</main>", "</body>"):
+        match = re.search(re.escape(closing), html, re.I)
+        if match:
+            return f"{html[:match.start()]}{section}\n{html[match.start():]}"
+    return f"{html.rstrip()}\n{section}\n"
+
+
+__all__ = [
+    "CITATION_GUIDANCE",
+    "OUTLOOK_RESEARCH_GUIDANCE",
+    "RESEARCH_ARTIFACT",
+    "RESEARCH_GUIDANCE",
+    "SLIDES_ARTIFACT",
+    "SLIDES_GUIDANCE",
+    "ResearchClaim",
+    "attach_verified_evidence",
+    "check_citations",
+    "check_research",
+    "current_outlook_choice",
+]

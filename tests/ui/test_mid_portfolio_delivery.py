@@ -328,7 +328,8 @@ async def test_managed_fund_slides_route_missing_evidence_back_to_research_then_
     assert index[0]["url"] == stored["claims"][0]["source_url"] == SOURCE_URL
     assert not (task / "accepted").exists()
     accepted = scenario.accept_attempt(session, 2, attempt.name, tuple(summary["candidates"]))
-    assert SOURCE_URL in (accepted / "marketing/semiconductor-outlook.html").read_text("utf-8")
+    delivered = (accepted / "marketing/semiconductor-outlook.html").read_text("utf-8")
+    assert SOURCE_URL in delivered and 'id="verified-evidence"' in delivered
 
 
 async def test_managed_fund_slides_report_zero_search_and_schema_before_repairing_upstream(

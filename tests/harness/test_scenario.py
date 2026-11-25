@@ -56,7 +56,12 @@ def test_load_original_prompts_and_matching_scenario_policy(tmp_path, name, memb
     for agent, profile in profiles.items():
         assert profile.system_prompt == f"Role {agent}.\n第二行。"
         assert profile.role == "worker"
-        assert profile.tools == tools[agent]
+        expected = (
+            list(dict.fromkeys([*tools[agent], "file_patch"]))
+            if "file_write" in tools[agent]
+            else tools[agent]
+        )
+        assert profile.tools == expected
 
 
 def test_full_profiles_keep_configuration_and_use_original_teacher_prompt(tmp_path):
@@ -79,7 +84,7 @@ def test_full_profiles_keep_configuration_and_use_original_teacher_prompt(tmp_pa
     assert profiles["qa"].role == "critic"
     assert profiles["qa"].system_prompt == "Role qa.\n第二行。"
     assert profiles["qa"].capabilities == ["review"]
-    assert profiles["qa"].tools == ["file_write"]
+    assert profiles["qa"].tools == ["file_write", "file_patch"]
     (tmp_path / "qa.yaml").unlink()
     with pytest.raises(ValueError, match="Missing profiles.*qa"):
         load_scenario_profiles(scenario, tmp_path)
@@ -97,7 +102,13 @@ def test_published_policy_aliases_select_the_teacher_team(tmp_path, team, policy
     source.write_text(yaml.safe_dump({"scenario_id": policy_id, "roles": tools}), encoding="utf-8")
     profiles = load_scenario_profiles(scenario, tmp_path)
     assert scenario.scenario_id == name.replace("_", "-")
-    assert {agent: profile.tools for agent, profile in profiles.items()} == tools
+    expected = {
+        agent: list(dict.fromkeys([*tools[agent], "file_patch"]))
+        if "file_write" in tools[agent]
+        else tools[agent]
+        for agent in members
+    }
+    assert {agent: profile.tools for agent, profile in profiles.items()} == expected
 
     (tmp_path / "canonical.yaml").write_text(
         yaml.safe_dump({"scenario_id": name, "roles": tools}), encoding="utf-8"

@@ -7,6 +7,7 @@ from protocol.models import ChatMessage, DiscussionTurn
 from protocol.ports import ModelClient
 from runtime.client import ModelOutputLimitError
 from runtime.discussion_context import TokenCounter, count_tokens
+from runtime.discussion_delivery_policy import WRITE_TOOLS
 from runtime.discussion_workflow import progress_view
 
 
@@ -37,7 +38,7 @@ def status_footer(turn: DiscussionTurn) -> str:
     last_write = -1
     checked = False
     for index, (call, result) in enumerate(zip(turn.tool_calls, turn.tool_results, strict=True)):
-        if call.name == "file_write" and result.ok:
+        if call.name in WRITE_TOOLS and result.ok:
             last_write = index
             checked = False
         elif (

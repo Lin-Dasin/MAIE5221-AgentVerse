@@ -31,6 +31,7 @@ from protocol.models import (
     ToolResult,
 )
 from protocol.ports import ModelClient, ToolExecutor
+from runtime.discussion_delivery_policy import WRITE_TOOLS
 from ui.scenario import TaskEngine, TaskRequest, _require_unlinked, file_sha256
 from ui.scenario_engine import (
     _file_tools,
@@ -583,9 +584,14 @@ class _SearchEvidenceExecutor:
 
     def _bind_evidence(self, call: ToolCall) -> ToolCall:
         """Resolve the model's exact URL to a matching observed reference before saving."""
-        path, body = call.arguments.get("path"), call.arguments.get("text")
+        path = call.arguments.get("path")
+        body = (
+            call.arguments.get("text")
+            if call.name == "file_write"
+            else call.arguments.get("new_text")
+        )
         if (
-            call.name != "file_write"
+            call.name not in WRITE_TOOLS
             or not isinstance(path, str)
             or PurePosixPath(path).as_posix() != self.evidence_path
             or not isinstance(body, str)
@@ -633,7 +639,8 @@ class _SearchEvidenceExecutor:
         if not changed:
             return call
         text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-        return call.model_copy(update={"arguments": {**call.arguments, "text": text}})
+        field = "text" if call.name == "file_write" else "new_text"
+        return call.model_copy(update={"arguments": {**call.arguments, field: text}})
 
     def _publish_index(self) -> None:
         path = inside(self._workspace, RECORDED_SEARCH)
@@ -670,7 +677,7 @@ class _SoftwareRepairExecutor:
         target = call.arguments.get("path")
         if (
             program
-            and call.name == "file_write"
+            and call.name in WRITE_TOOLS
             and isinstance(target, str)
             and PurePosixPath(target).as_posix() == program
         ):
@@ -700,17 +707,81 @@ class _MarkdownDeliveryExecutor:
 
     async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
         target = call.arguments.get("path")
-        markdown = call.arguments.get("text")
         if (
             context.agent_id == self.owner
-            and call.name == "file_write"
-            and isinstance(markdown, str)
+            and call.name in WRITE_TOOLS
             and isinstance(target, str)
             and PurePosixPath(target).as_posix() == self.artifact
         ):
-            rendered = self.render(markdown)
-            call = call.model_copy(update={"arguments": {**call.arguments, "text": rendered}})
+            if call.name == "file_write" and isinstance(call.arguments.get("text"), str):
+                rendered = self.render(call.arguments["text"])
+                call = call.model_copy(update={"arguments": {**call.arguments, "text": rendered}})
+            elif call.name == "file_patch":
+                result = await self.base.execute(call, context)
+                if result.ok:
+                    path = inside(self.base.workspace(context.agent_id), self.artifact)
+                    rendered = self.render(path.read_text(encoding="utf-8"))
+                    path.write_text(rendered, encoding="utf-8")
+                return result
         return await self.base.execute(call, context)
+
+
+class _VerifiedEvidenceExecutor:
+    """Inject the verified research slide before/after either supported write tool."""
+
+    def __init__(
+        self,
+        base: ToolExecutor,
+        *,
+        owner: str,
+        artifact: str,
+        claims_provider: Callable[
+            [], tuple[list[scenario_fund_sources.ResearchClaim], list[str]]
+        ],
+    ) -> None:
+        self.base = base
+        self.owner = owner
+        self.artifact = artifact
+        self.claims_provider = claims_provider
+
+    def workspace(self, agent_id: str) -> Path:
+        return self.base.workspace(agent_id)
+
+    async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
+        target = call.arguments.get("path")
+        if (
+            context.agent_id != self.owner
+            or call.name not in WRITE_TOOLS
+            or not isinstance(target, str)
+            or PurePosixPath(target).as_posix() != self.artifact
+        ):
+            return await self.base.execute(call, context)
+        claims, defects = self.claims_provider()
+        if defects or not claims:
+            return await self.base.execute(call, context)
+        if call.name == "file_write" and isinstance(call.arguments.get("text"), str):
+            try:
+                text = scenario_fund_sources.attach_verified_evidence(
+                    call.arguments["text"], claims
+                )
+            except ValueError as exc:
+                return ToolResult(ok=False, error=str(exc))
+            call = call.model_copy(update={"arguments": {**call.arguments, "text": text}})
+            return await self.base.execute(call, context)
+        result = await self.base.execute(call, context)
+        if not result.ok:
+            return result
+        path = inside(self.base.workspace(context.agent_id), self.artifact)
+        try:
+            text = scenario_fund_sources.attach_verified_evidence(
+                path.read_text(encoding="utf-8"), claims
+            )
+        except (OSError, ValueError) as exc:
+            return ToolResult(ok=False, error=f"verified evidence injection failed: {exc}")
+        path.write_text(text, encoding="utf-8")
+        data = dict(result.data) if isinstance(result.data, dict) else {}
+        data.update({"path": self.artifact, "bytes": len(text.encode("utf-8"))})
+        return result.model_copy(update={"data": data})
 
 
 class _ScenarioReviewer:
@@ -769,6 +840,15 @@ class _ScenarioReviewer:
             self.observations,
             self.today,
             references=self.references,
+        )
+
+    def fund_claims(self) -> tuple[list[scenario_fund_sources.ResearchClaim], list[str]]:
+        return scenario_fund_sources.check_research(
+            self.workspaces["research"],
+            self.observations,
+            self.today,
+            references=self.references,
+            require_current_outlook=self.current_outlook,
         )
 
     async def review(self, *, config, requirement, root, history) -> "delivery.DeliveryReview":
@@ -1245,6 +1325,13 @@ def managed_discussion_engine(
             active_executor = _MarkdownDeliveryExecutor(
                 active_executor, "editor", scenario_newsroom_factcheck.ARTICLE_ARTIFACT,
                 render_fact_check,
+            )
+        if current_outlook:
+            active_executor = _VerifiedEvidenceExecutor(
+                active_executor,
+                owner=requirements[-1].owner,
+                artifact=scenario_fund_sources.SLIDES_ARTIFACT,
+                claims_provider=reviewer.fund_claims,
             )
         if (detector_search or portfolio_task or current_outlook) and source_owner is not None:
             owner = source_owner

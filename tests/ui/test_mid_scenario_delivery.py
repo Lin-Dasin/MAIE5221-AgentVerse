@@ -209,6 +209,8 @@ class _NewsroomModel:
         if is_repair and role not in self.repair_roles:
             self.repair_roles.append(role)
         allowed = set(ROLES[role]) | ({"file_read"} if role == "reporter" else set())
+        if "file_write" in allowed:
+            allowed.add("file_patch")
         if offered - allowed:
             self.contract_errors.append((role, offered))
         for call in response.tool_calls:
