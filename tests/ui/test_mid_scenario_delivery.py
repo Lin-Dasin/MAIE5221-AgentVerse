@@ -104,6 +104,35 @@ def test_run_command_forwards_managed_limits(tmp_path, monkeypatch):
     }
 
 
+def test_managed_defaults_output_tokens_to_8192(tmp_path, monkeypatch):
+    session, profiles = _prepare_newsroom(tmp_path)
+    options = {}
+
+    def fake_make_live_engine(**kwargs):
+        options.update(kwargs)
+
+        async def engine(request, human, emit):
+            return None
+
+        return engine
+
+    monkeypatch.setattr(scenario_engine, "make_live_engine", fake_make_live_engine)
+    assert (
+        scenario.main(
+            [
+                "run",
+                str(session),
+                "1",
+                "--profiles-dir",
+                str(profiles),
+                "--managed",
+            ]
+        )
+        == 1
+    )
+    assert options["max_output_tokens"] == 8192
+
+
 def test_run_command_forwards_hitl_pause(tmp_path, monkeypatch):
     session, profiles = _prepare_newsroom(tmp_path)
     options = {}

@@ -46,6 +46,31 @@ def delivery_fingerprints(
     return snapshots
 
 
+def _near_miss(root: Path, target: Path) -> str | None:
+    """Name a same-stem sibling with a different suffix for an actionable defect."""
+    try:
+        parent = target.parent.resolve()
+        if not parent.is_relative_to(root.resolve()) or not parent.is_dir():
+            return None
+        candidates = sorted(
+            path
+            for path in parent.iterdir()
+            if path.is_file()
+            and not path.is_symlink()
+            and path.stem == target.stem
+            and path.suffix != target.suffix
+        )
+    except OSError:
+        return None
+    if not candidates:
+        return None
+    try:
+        name = candidates[0].relative_to(root).as_posix()
+    except ValueError:
+        name = candidates[0].name
+    return f"Found near-miss file {name}; write the exact required path"
+
+
 def artifact_evidence(root: Path, requirement: DeliveryRequirement) -> list[ArtifactEvidence]:
     """Fingerprint ordinary files; deny links in any relative path component."""
     evidence = []
@@ -56,7 +81,11 @@ def artifact_evidence(root: Path, requirement: DeliveryRequirement) -> list[Arti
             if target.is_symlink():
                 raise ValueError(f"unsafe_artifact: {relative} contains a symlink")
         if not target.resolve().is_relative_to(root) or not target.is_file():
-            raise ValueError(f"missing_artifact: {relative} must be an ordinary workspace file")
+            detail = _near_miss(root, target)
+            suffix = f"; {detail}" if detail else ""
+            raise ValueError(
+                f"missing_artifact: {relative} must be an ordinary workspace file{suffix}"
+            )
         digest = hashlib.sha256()
         size = 0
         with target.open("rb") as stream:

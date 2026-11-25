@@ -400,7 +400,12 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
         default=None,
         help="Default: 180000 in managed mode, 60000 in open mode",
     )
-    run.add_argument("--max-output-tokens", type=int, default=2048)
+    run.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help="Default: 8192 in managed mode, 2048 in open mode",
+    )
     run.add_argument(
         "--managed", action="store_true", help="Run automated checks and owner-directed rework"
     )
@@ -452,10 +457,13 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
             max_task_tokens = args.max_task_tokens
             if max_task_tokens is None:
                 max_task_tokens = 180_000 if args.managed else 60_000
+            max_output_tokens = args.max_output_tokens
+            if max_output_tokens is None:
+                max_output_tokens = 8192 if args.managed else 2048
             limits = dict(
                 max_rounds=rounds,
                 max_task_tokens=max_task_tokens,
-                max_output_tokens=args.max_output_tokens,
+                max_output_tokens=max_output_tokens,
             )
             if args.managed:
                 session, _ = _read_session(session_dir)

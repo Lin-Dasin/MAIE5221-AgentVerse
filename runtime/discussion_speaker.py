@@ -405,8 +405,22 @@ async def speak(
                 and (path := output_path(call.arguments.get("path"))) is not None
             }
             if managed and required_artifacts:
+                workspace_getter = getattr(executor, "workspace", None)
+                try:
+                    workspace = (
+                        workspace_getter(profile.agent_id)
+                        if callable(workspace_getter)
+                        else None
+                    )
+                    present = (
+                        {path for path in required_artifacts if (workspace / path).is_file()}
+                        if workspace is not None
+                        else set()
+                    )
+                except (AttributeError, OSError, TypeError):
+                    present = set()
                 performed_work = (
-                    all(path in written for path in required_artifacts)
+                    all(path in written or path in present for path in required_artifacts)
                     if require_all_artifacts
                     else bool(written.intersection(required_artifacts))
                 )

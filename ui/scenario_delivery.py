@@ -485,10 +485,13 @@ class _SearchEvidenceExecutor:
         self.references = references
         self.owner = owner
         self.evidence_path = evidence_path
-        self.workspace = workspace
+        self._workspace = workspace
         self.event_date = event_date
         self.outlook_date = outlook_date
         self.initial_query = initial_query
+
+    def workspace(self, agent_id: str) -> Path:
+        return self.base.workspace(agent_id)
 
     async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
         if context.agent_id == self.owner:
@@ -633,7 +636,7 @@ class _SearchEvidenceExecutor:
         return call.model_copy(update={"arguments": {**call.arguments, "text": text}})
 
     def _publish_index(self) -> None:
-        path = inside(self.workspace, RECORDED_SEARCH)
+        path = inside(self._workspace, RECORDED_SEARCH)
         for parent in (path.parent, path):
             try:
                 _require_unlinked(parent)
@@ -658,6 +661,9 @@ class _SoftwareRepairExecutor:
     def __init__(self, base: ToolExecutor, protected: dict[str, str]) -> None:
         self.base = base
         self.protected = protected
+
+    def workspace(self, agent_id: str) -> Path:
+        return self.base.workspace(agent_id)
 
     async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
         program = self.protected.get(context.agent_id)
@@ -688,6 +694,9 @@ class _MarkdownDeliveryExecutor:
         self.owner = owner
         self.artifact = artifact
         self.render = render
+
+    def workspace(self, agent_id: str) -> Path:
+        return self.base.workspace(agent_id)
 
     async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult:
         target = call.arguments.get("path")
@@ -1033,12 +1042,14 @@ def managed_discussion_engine(
     number: int,
     max_rounds: int = 1,
     max_task_tokens: int = 60_000,
-    max_output_tokens: int = 2_048,
+    max_output_tokens: int = 8_192,
     max_rework_rounds: int = 3,
     hitl_pause_timeout_sec: float = 0.0,
     generic_verifier: bool = False,
 ) -> TaskEngine:
     """Stage the exact model-produced bytes after all deterministic checks pass."""
+    if max_output_tokens < 1:
+        raise ValueError("max_output_tokens must be positive")
     from orchestrator.delivery import DeliveryDiscussionRunner
     from orchestrator.discussion import RoundRobinDiscussionEngine
     from protocol.delivery import DeliveryPlan
@@ -1170,6 +1181,9 @@ def managed_discussion_engine(
         engine = RoundRobinDiscussionEngine(
             _file_tools(executor, request.inputs),
             hitl_pause_timeout_sec=hitl_pause_timeout_sec,
+            require_all_artifacts=any(
+                len(item.artifacts) > 1 for item in requirements
+            ),
         )
         runner = DeliveryDiscussionRunner(
             engine,
