@@ -3,7 +3,11 @@
 from types import SimpleNamespace
 
 from protocol.models import AcceptanceRule, AgentProfile
-from ui.scenario_delivery import _generic_requirements, _GenericFileVerifier
+from ui.scenario_delivery import (
+    _generic_requirements,
+    _GenericFileVerifier,
+    _research_required,
+)
 
 
 def _profile(agent_id, tools):
@@ -49,3 +53,30 @@ async def test_research_gate_fails_until_a_search_returns_a_result(tmp_path):
     tracker.results = 1
     passed = await verifier.check(rules, tmp_path)
     assert passed.passed and passed.checks_total == 1
+
+
+def test_research_gate_requires_capability_and_explicit_web_intent(monkeypatch):
+    profiles = {
+        "coordinator": _profile("coordinator", ["file_read", "file_write"]),
+        "writer": _profile("writer", ["file_read", "file_write"]),
+    }
+    monkeypatch.delenv("SEARCH_API_KEY", raising=False)
+    assert not _research_required(
+        "Investigate and research the local codebase.", ["coordinator", "writer"], profiles
+    )
+
+    profiles["writer"] = _profile("writer", ["file_read", "file_write", "web_search"])
+    monkeypatch.setenv("SEARCH_API_KEY", "fixture")
+    assert not _research_required(
+        "Investigate why the local script fails.", ["coordinator", "writer"], profiles
+    )
+
+
+def test_research_gate_accepts_explicit_web_search_when_capable(monkeypatch):
+    profiles = {
+        "writer": _profile("writer", ["file_read", "file_write", "web_search"]),
+    }
+    monkeypatch.setenv("SEARCH_API_KEY", "fixture")
+    assert _research_required(
+        "Web search latest data and cite the returned official website.", ["writer"], profiles
+    )

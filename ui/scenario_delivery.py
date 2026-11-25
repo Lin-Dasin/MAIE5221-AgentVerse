@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import json
+import os
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -63,7 +64,9 @@ _ARTIFACT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _RESEARCH_HINT = re.compile(
-    r"\bresearch\b|\bsearch\b|\binvestigate\b|调研|检索", re.IGNORECASE
+    r"\bweb\s*search\b|\bonline\b|\blatest\s+(?:news|data|results?)\b|"
+    r"\bofficial\s+(?:website|site)\b|联网|实时检索|最新资料",
+    re.IGNORECASE,
 )
 _COORDINATION_ROLE_HINTS = (
     "lead",
@@ -74,7 +77,6 @@ _COORDINATION_ROLE_HINTS = (
     "auditor",
     "risk",
     "qa",
-    "fact_checker",
     "chief",
 )
 _PRODUCER_ROLE_HINTS = (
@@ -249,6 +251,17 @@ def _declared_artifacts(task_text: str) -> list[str]:
         if path not in found:
             found.append(path)
     return found[:8]
+
+
+def _research_required(
+    task_text: str,
+    speakers: list[str],
+    profiles: dict[str, AgentProfile],
+) -> bool:
+    """Require research only when an active role can search and the task asks for web evidence."""
+    has_search_role = any("web_search" in profiles[speaker].tools for speaker in speakers)
+    has_backend = bool(os.environ.get("SEARCH_API_KEY", "").strip())
+    return has_search_role and has_backend and bool(_RESEARCH_HINT.search(task_text))
 
 
 def _generic_requirements(
@@ -1005,7 +1018,9 @@ def _generic_managed_engine(
             max_output_tokens=max_output_tokens,
         )
         profiles = dict(request.profiles)
-        research_required = bool(_RESEARCH_HINT.search(request.task.text))
+        research_required = _research_required(
+            request.task.text, config.speakers, profiles
+        )
         tracker = _SearchTracker(executor)
         requirements = _generic_requirements(
             request, config.speakers, profiles, number
