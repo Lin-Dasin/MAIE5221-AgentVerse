@@ -4,14 +4,19 @@ These are call contracts, not implementations of tools, memory, verdicts or even
 In particular, D maps Observer callbacks to its own bus/events.py schema.
 """
 
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol
 
 from protocol.models import (
     AcceptanceRule,
     AgentOutcome,
+    AgentProfile,
     ChatMessage,
     CriticResult,
+    DiscussionConfig,
+    DiscussionResult,
+    DiscussionTurn,
     ExecutionContext,
     HITLDecision,
     HITLRequest,
@@ -47,6 +52,30 @@ class ToolExecutor(Protocol):
     """
 
     async def execute(self, call: ToolCall, context: ExecutionContext) -> ToolResult: ...
+
+
+class HumanInput(Protocol):
+    async def next_message(self) -> ChatMessage | None:
+        """Poll once without waiting for a new message; return user text or None."""
+        ...
+
+
+class DiscussionEngine(Protocol):
+    """Run a group discussion without managing the participants' workspaces."""
+
+    async def run(
+        self,
+        config: DiscussionConfig,
+        *,
+        profiles: Mapping[str, AgentProfile],
+        history: Sequence[ChatMessage],
+        model: ModelClient,
+        executor: ToolExecutor,
+        human: HumanInput,
+        emit: Callable[[DiscussionTurn], Awaitable[None]] | None,
+    ) -> DiscussionResult:
+        """Emit each completed turn once; only its speaker and content go to chat."""
+        ...
 
 
 class Memory(Protocol):

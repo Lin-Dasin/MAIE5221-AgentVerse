@@ -10,7 +10,7 @@ from orchestrator.planner import Planner, PlanningError
 from orchestrator.scheduler import Scheduler
 from protocol.models import ChatMessage, FailureCode, TaskStatus
 from runtime.agent import AgentRuntime
-from runtime.client import DeepSeekClient, ModelCallError
+from runtime.client import DeepSeekClient, ModelCallError, ModelOutputLimitError
 from tests.helpers import FixtureTools, StubVerifier, config, graph, profile, task
 from tests.test_runtime import write_tool
 
@@ -23,6 +23,57 @@ def client_for(handler, **kwargs):
         transport=httpx.MockTransport(handler),
         **kwargs,
     )
+
+
+@pytest.mark.parametrize(
+    "usage, expected",
+    [
+        ({"total_tokens": 4321}, 4321),
+        ({"prompt_tokens": 20, "completion_tokens": 10}, 30),
+        (None, None),
+    ],
+)
+async def test_truncated_tool_response_retains_usage_without_parsing_partial_arguments(
+    usage, expected
+):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "partial",
+                                    "function": {"name": "file_write", "arguments": '{"path":'},
+                                }
+                            ]
+                        },
+                    }
+                ],
+                "usage": usage,
+            },
+        )
+
+    client = client_for(handler)
+    try:
+        with pytest.raises(ModelOutputLimitError) as error:
+            await client.complete(
+                [ChatMessage(role="user", content="Write a file.")], [], max_tokens=10
+            )
+        assert isinstance(error.value, ModelCallError)
+        if expected is None:
+            assert error.value.usage_source == "estimated" and error.value.tokens > 10
+        else:
+            assert error.value.usage_source == "provider" and error.value.tokens == expected
+        assert len(requests) == 1  # Recovery belongs to the caller, not the HTTP retry loop.
+    finally:
+        await client.aclose()
 
 
 @pytest.mark.parametrize("thinking", ["disabled", "enabled"])
