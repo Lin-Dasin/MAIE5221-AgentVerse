@@ -7,12 +7,13 @@ separate from the four Agent profiles.
 
 ## Set up and operate a scenario
 
-Use the local integration branch with the D scenario driver, the Role A
-discussion engine from PR #40 and the Role C scenario policy YAMLs. Use that
-checkout while the engine and official role policies are pending integration
-into `develop`. From the repository root, use the project Python environment
-and the model credentials already configured for the process.
+Use a checkout that includes this scenario runner and the Role C scenario
+policy YAMLs in `profiles/scenarios`. The Role A discussion and delivery
+engine is available on `develop` through PR #40. From the repository root,
+use the project Python environment and the model credentials already
+configured for the process.
 [Role A engine](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/40) ·
+[Scenario policies](https://github.com/Lin-Dasin/MAIE5221-AgentVerse/pull/41) ·
 [Local configuration](local-setup.md)
 
 For the newsroom (S2), use the existing DeepSeek and Tavily configuration.
