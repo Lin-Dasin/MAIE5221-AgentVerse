@@ -48,6 +48,7 @@ def delivery_step(
     prompt_tokens: int,
     closing_reserve: int,
     output_cap: int,
+    allow_search: bool = False,
 ) -> DeliveryStep:
     """Keep a closing allowance and prioritise production over more exploration.
 
@@ -81,6 +82,7 @@ def delivery_step(
             for tool in tools
             if tool.name in PRODUCTION_TOOLS
             or (phase == "source_check" and tool.name == "web_search")
+            or (phase == "produce" and allow_search and tool.name == "web_search")
         ]
         instruction = (
             "PRODUCE: inspection is closed for this contribution. Use file_write to persist "
@@ -91,6 +93,11 @@ def delivery_step(
             "is unavailable, report the specific blocker; never invent it. "
             "After a successful file_write, bounded file_read checks reopen."
         )
+        if any(tool.name == "web_search" for tool in selected):
+            instruction += (
+                " If the required evidence is missing, run a targeted web_search before writing "
+                "and cite only returned URLs/excerpts."
+            )
         if phase == "source_check":
             instruction = (
                 "SOURCE CHECK: one bounded opportunity to resolve specific source defects with "

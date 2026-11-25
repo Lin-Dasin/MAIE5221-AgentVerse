@@ -15,8 +15,8 @@ EXPECTED_SCENARIOS = {
         "scenario_id": "scenario_1_software",
         "roles": {
             "lead": ["file_read", "file_write"],
-            "dev": ["file_write", "file_read"],
-            "qa": ["file_read", "file_write"],
+            "dev": ["file_write", "file_read", "code_exec"],
+            "qa": ["file_read", "file_write", "code_exec"],
             "release": ["file_read", "file_write"],
         },
     },

@@ -278,20 +278,28 @@ def check_research(
     require_current_outlook: bool = False,
 ) -> tuple[list[ResearchClaim], list[str]]:
     """Match every cited source and excerpt to this researcher's search results."""
+    no_search = not (observations or references)
+    no_search_defect = (
+        "No usable web_search results were recorded for research in this task. Run a "
+        "targeted web_search and save claims backed by the returned URLs and exact excerpts."
+    )
     try:
         research = _Research.model_validate_json(_read(root, artifact))
     except ValidationError as error:
-        return [], [
+        defects = [
             f"Research evidence field {'.'.join(map(str, item['loc'])) or 'root'}: {item['msg']}."
             for item in error.errors(include_url=False, include_context=False, include_input=False)
         ]
+        if no_search:
+            defects.insert(0, no_search_defect)
+        return [], defects
     except ValueError as error:
-        return [], [str(error)]
-    if not (observations or references):
-        return [], [
-            "No usable web_search results were recorded for research in this task. Run a "
-            "targeted web_search and save claims backed by the returned URLs and exact excerpts."
-        ]
+        defects = [str(error)]
+        if no_search:
+            defects.insert(0, no_search_defect)
+        return [], defects
+    if no_search:
+        return [], [no_search_defect]
     defects = []
     current_outlook = False
     for index, item in enumerate(research.claims, start=1):

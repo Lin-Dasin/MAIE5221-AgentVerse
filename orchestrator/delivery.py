@@ -3,9 +3,11 @@
 import asyncio
 import json
 import math
+import shutil
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 
+from orchestrator.artifacts import inside
 from orchestrator.delivery_checks import assess_delivery, delivery_fingerprints
 from orchestrator.discussion import HUMAN_POLL_TIMEOUT_SEC, RoundRobinDiscussionEngine
 from protocol.delivery import (
@@ -24,6 +26,30 @@ from runtime.discussion_workflow import progress_view
 
 class _PlanReviewRequired(RuntimeError):
     pass
+
+
+def _snapshot_artifacts(plan, roots: Mapping[str, Path], destination: Path) -> None:
+    """Copy declared candidates aside so a worse repair cannot erase them."""
+    for requirement in plan.requirements:
+        for artifact in requirement.artifacts:
+            source = inside(Path(roots[requirement.owner]), artifact)
+            if source.is_file() and not source.is_symlink():
+                target = Path(destination) / requirement.owner / artifact
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+
+
+def _restore_artifacts(plan, roots: Mapping[str, Path], snapshot: Path) -> None:
+    """Restore the best snapshot, removing files that were absent from it."""
+    for requirement in plan.requirements:
+        for artifact in requirement.artifacts:
+            source = Path(snapshot) / requirement.owner / artifact
+            target = inside(Path(roots[requirement.owner]), artifact)
+            if source.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+            elif target.exists():
+                target.unlink()
 
 
 class _HumanWatch:
@@ -73,6 +99,7 @@ class DeliveryDiscussionRunner:
         supported_acceptance_types: frozenset[str] = frozenset({"file_exists", "text_contains"}),
         check_timeout_sec: float = 30,
         prompt_token_counter: TokenCounter = estimate_tokens,
+        snapshot_root: Path | None = None,
     ):
         if not math.isfinite(check_timeout_sec) or check_timeout_sec <= 0:
             raise ValueError("check_timeout_sec must be finite and positive")
@@ -82,6 +109,7 @@ class DeliveryDiscussionRunner:
         self.supported_types = supported_acceptance_types
         self.check_timeout = check_timeout_sec
         self.counter = prompt_token_counter
+        self.snapshot_root = Path(snapshot_root).resolve() if snapshot_root else None
 
     async def run(
         self,
@@ -128,6 +156,7 @@ class DeliveryDiscussionRunner:
         budget = DiscussionBudget(model, config.max_task_tokens, self.counter)
         watched_human = _HumanWatch(human)
         attempts: list[DeliveryAttempt] = []
+        best: tuple[int, int, list[RequirementAssessment], Path] | None = None
         assessments = [
             RequirementAssessment(
                 requirement_id=item.requirement_id,
@@ -139,6 +168,10 @@ class DeliveryDiscussionRunner:
         ]
 
         def finish(reason: str) -> DeliveryResult:
+            nonlocal assessments
+            if reason in {"rework_limit", "token_budget"} and best is not None:
+                _restore_artifacts(plan, roots, best[3])
+                assessments = [item.model_copy(deep=True) for item in best[2]]
             final_assessments = assessments
             if reason == "plan_review_required":
                 final_assessments = [
@@ -185,7 +218,22 @@ class DeliveryDiscussionRunner:
                     allowance = max(1, allowance * 3 // 5)
             else:
                 failed_owners = {item.owner for item in assessments if item.status == "failed"}
-                speakers = [owner for owner in config.speakers if owner in failed_owners]
+                by_id = {item.requirement_id: item for item in assessments}
+                first_failed = next(
+                    (
+                        item
+                        for item in plan.requirements
+                        if (assessed := by_id.get(item.requirement_id)) is not None
+                        and assessed.status == "failed"
+                    ),
+                    None,
+                )
+                # Repair upstream before downstream: a pending evidence owner must
+                # finish before authors rewrite large deliverables.
+                if first_failed is not None and first_failed.owner in config.speakers:
+                    speakers = [first_failed.owner]
+                else:
+                    speakers = [owner for owner in config.speakers if owner in failed_owners]
                 # Split the still-unused allowance among the remaining repair rounds.
                 allowance = max(1, budget.remaining // (plan.max_rework_rounds - attempt + 1))
             cycle = config.model_copy(
@@ -327,6 +375,40 @@ class DeliveryDiscussionRunner:
                     )
                     for item in assessments
                 ]
+            score = sum(1 for item in assessments if item.status == "passed")
+            if self.snapshot_root is not None:
+                snapshot_dir = self.snapshot_root / f"attempt-{attempt}"
+                if snapshot_dir.exists():
+                    shutil.rmtree(snapshot_dir)
+                snapshot_dir.mkdir(parents=True, exist_ok=True)
+                await asyncio.to_thread(_snapshot_artifacts, plan, roots, snapshot_dir)
+                (snapshot_dir / "snapshot.json").write_text(
+                    json.dumps(
+                        {
+                            "attempt": attempt,
+                            "score": score,
+                            "assessments": [
+                                {
+                                    "requirement_id": item.requirement_id,
+                                    "owner": item.owner,
+                                    "status": item.status,
+                                }
+                                for item in assessments
+                            ],
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                if best is None or score > best[0]:
+                    best = (
+                        score,
+                        attempt,
+                        [item.model_copy(deep=True) for item in assessments],
+                        snapshot_dir,
+                    )
             attempts.append(
                 DeliveryAttempt(
                     attempt=attempt,

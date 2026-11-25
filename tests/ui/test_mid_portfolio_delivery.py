@@ -299,21 +299,27 @@ async def test_managed_fund_slides_route_missing_evidence_back_to_research_then_
         number=2,
         max_task_tokens=180_000,
         max_output_tokens=1024,
-        max_rework_rounds=1,
+        max_rework_rounds=2,
     )
     assert await scenario.run_task(session, 2, profiles, engine) is None
     assert not replies and not model.responses
     assert model.observed_source_ref
-    repairs = [(role, prompt) for role, prompt in model.requests if "Rework attempt: 1/1" in prompt]
+    repairs = [
+        (role, prompt)
+        for role, prompt in model.requests
+        if "Rework attempt: 1/" in prompt or "Rework attempt: 2/" in prompt
+    ]
     assert list(dict.fromkeys(role for role, _ in repairs)) == ["research", "marketing"]
-    assert "No usable web_search results" in repairs[0][1]
-    assert "Read the revised research-evidence.json" in repairs[-1][1]
+    assert "Claim 1" in repairs[0][1]
+    assert "semiconductor industry outlook" in repairs[0][1]
+    assert "Use this research claim" in repairs[-1][1]
     task = session / "tasks/task-2"
     (attempt,) = (task / "attempts").iterdir()
     summary = json.loads((attempt / "discussion-summary.json").read_bytes())
     assert summary["status"] == "passed"
-    assert summary["attempts"][1]["changed_requirements"] == ["fund-slides", "fund-sources"]
-    assert summary["search_evidence"] == {"owner": "research", "calls": 2, "calls_with_results": 1}
+    assert summary["attempts"][1]["changed_requirements"] == ["fund-sources"]
+    assert summary["attempts"][2]["changed_requirements"] == ["fund-slides"]
+    assert summary["search_evidence"] == {"owner": "research", "calls": 3, "calls_with_results": 1}
     stored = json.loads((attempt / "outputs/research/research-evidence.json").read_bytes())
     index = json.loads(
         (attempt / "workspaces/research/inputs/recorded-search-results.json").read_bytes()
@@ -323,3 +329,120 @@ async def test_managed_fund_slides_route_missing_evidence_back_to_research_then_
     assert not (task / "accepted").exists()
     accepted = scenario.accept_attempt(session, 2, attempt.name, tuple(summary["candidates"]))
     assert SOURCE_URL in (accepted / "marketing/semiconductor-outlook.html").read_text("utf-8")
+
+
+async def test_managed_fund_slides_report_zero_search_and_schema_before_repairing_upstream(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("orchestrator.delivery")
+    from ui.scenario_delivery import managed_discussion_engine
+
+    session, profiles = _scenario_fixture(tmp_path)
+
+    async def reviewed_task_one(request, human, emit):
+        prior = request.workspace / "outputs/fund_manager/investment-proposal.md"
+        prior.parent.mkdir()
+        prior.write_text(PROPOSAL, encoding="utf-8")
+        return ("outputs/fund_manager/investment-proposal.md",)
+
+    await scenario.run_task(session, 1, profiles, reviewed_task_one)
+    replies = _mock_search(monkeypatch, empty_first=True)
+    bad = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim": OUTLOOK_CLAIM,
+                    "source_url": SOURCE_URL,
+                    "source_ref": "R9",
+                    "source_date": OUTLOOK_DATE,
+                }
+            ],
+            "_status": "draft",
+            "notes": "internal",
+        }
+    )
+    good = json.dumps(
+        {
+            "claims": [
+                {
+                    "claim": OUTLOOK_CLAIM,
+                    "source_url": SOURCE_URL,
+                    "source_date": OUTLOOK_DATE,
+                    "source_quote": f"Published {OUTLOOK_DATE}. {OUTLOOK_CLAIM}",
+                }
+            ]
+        }
+    )
+    deck = (
+        '<!doctype html><html><body><section id="one"><h1>Outlook</h1>'
+        f'<p>{OUTLOOK_CLAIM} <a href="{SOURCE_URL}">Release {OUTLOOK_DATE}</a></p>'
+        "</section></body></html>"
+    )
+    responses = deque()
+    requests = []
+
+    def turn(role, files, *, search=False):
+        if search:
+            responses.append(
+                (
+                    role,
+                    ModelResponse(
+                        tool_calls=[
+                            ToolCall(
+                                call_id="search", name="web_search", arguments={"query": "Release"}
+                            )
+                        ],
+                        tokens=50,
+                    ),
+                )
+            )
+        calls = [
+            ToolCall(
+                call_id=f"write-{index}",
+                name="file_write",
+                arguments={"path": path, "text": text},
+            )
+            for index, (path, text) in enumerate(files.items())
+        ]
+        responses.append((role, ModelResponse(tool_calls=calls, tokens=50)))
+        responses.append((role, ModelResponse(content="Files saved for review.", tokens=50)))
+
+    turn("research", {RESEARCH_ARTIFACT: bad})
+    turn("fund_manager", {"outputs/fund_manager/note.md": "note"})
+    turn("risk", {"outputs/risk/note.md": "note"})
+    turn("marketing", {SLIDES_ARTIFACT: deck})
+    turn("research", {RESEARCH_ARTIFACT: good}, search=True)
+
+    class Model:
+        async def complete(self, messages, tools, *, max_tokens):
+            role, response = responses.popleft()
+            requests.append((role, messages[0].content))
+            return response
+
+    engine = managed_discussion_engine(
+        Model(),
+        scenario_id="scenario-3-securities-fund",
+        number=2,
+        max_task_tokens=180_000,
+        max_output_tokens=1024,
+        max_rework_rounds=1,
+    )
+    assert await scenario.run_task(session, 2, profiles, engine) is None
+    assert not replies and not responses
+    repairs = [
+        (role, prompt)
+        for role, prompt in requests
+        if "Rework attempt: 1/" in prompt
+    ]
+    assert list(dict.fromkeys(role for role, _ in repairs)) == ["research"]
+
+    task = session / "tasks/task-2"
+    (attempt,) = (task / "attempts").iterdir()
+    summary = json.loads((attempt / "discussion-summary.json").read_bytes())
+    first = summary["attempts"][0]
+    research = next(item for item in first["assessments"] if item["owner"] == "research")
+    joined = " ".join(research["defects"])
+    assert "No usable web_search results" in joined
+    assert "Extra inputs are not permitted" in joined
+    assert summary["status"] == "partial"
+    assert summary["candidates"]

@@ -167,3 +167,39 @@ async def test_execute_never_raises_when_the_workspace_path_is_a_file(tmp_path: 
 
     assert result.ok is False
     assert "FileExistsError" in (result.error or "") or "workspaces" in (result.error or "")
+
+
+async def test_python_syntax_warning_is_reported_without_blocking_the_write(
+    tmp_path: Path,
+) -> None:
+    executor = make_executor(tmp_path)
+
+    result = await call(
+        executor, "file_write", path="outputs/broken.py", text="def broken(:\n    pass\n"
+    )
+
+    assert result.ok is True
+    assert result.data["syntax_ok"] is False
+    assert "line 1" in result.data["syntax_error"]
+    assert (tmp_path / "workspaces" / "writer" / "outputs" / "broken.py").is_file()
+
+
+async def test_json_syntax_warning_is_reported_without_blocking_the_write(
+    tmp_path: Path,
+) -> None:
+    executor = make_executor(tmp_path)
+
+    result = await call(executor, "file_write", path="outputs/bad.json", text='{"a": 1,}')
+
+    assert result.ok is True
+    assert result.data["syntax_ok"] is False
+    assert "line 1" in result.data["syntax_error"]
+
+
+async def test_valid_python_file_reports_syntax_ok(tmp_path: Path) -> None:
+    executor = make_executor(tmp_path)
+
+    result = await call(executor, "file_write", path="outputs/good.py", text="value = 1\n")
+
+    assert result.ok is True
+    assert result.data["syntax_ok"] is True

@@ -252,6 +252,11 @@ async def speak(
                 prompt_tokens=prompt_tokens,
                 closing_reserve=closing_reserve,
                 output_cap=config.max_output_tokens,
+                allow_search=any(tool.name == "web_search" for tool in active_tools)
+                and (
+                    search_calls == 0
+                    or "No usable web_search results" in profile.system_prompt
+                ),
             )
             if policy.phase == "report":
                 return await close()
@@ -442,7 +447,8 @@ async def speak(
                 result = listing_cache[listing_key].model_copy(deep=True)
                 result.meta["reused_listing"] = True
             elif call.name == "web_search" and (
-                delivery_started is not None or search_calls >= max_search_calls
+                search_calls >= max_search_calls
+                or (delivery_started is not None and search_calls > 0)
             ):
                 result = ToolResult(
                     ok=False,

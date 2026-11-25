@@ -7,6 +7,8 @@ path access through `sandbox.paths.resolve_within`. Handlers raise on bad input;
 
 from __future__ import annotations
 
+import ast
+import json
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,32 @@ PathArguments = dict[str, Any]
 
 MAX_READ_CHARS = 200_000
 MAX_LIST_ENTRIES = 500
+
+
+def _syntax_diagnostic(target: Path, text: str) -> dict[str, Any]:
+    """Return a non-blocking syntax warning for structured source files."""
+    suffix = target.suffix.lower()
+    if suffix == ".py":
+        try:
+            ast.parse(text)
+        except SyntaxError as exc:
+            return {
+                "syntax_ok": False,
+                "syntax_error": f"line {exc.lineno}: {exc.msg}",
+                "syntax_line": exc.lineno,
+            }
+        return {"syntax_ok": True}
+    if suffix == ".json":
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            return {
+                "syntax_ok": False,
+                "syntax_error": f"line {exc.lineno} column {exc.colno}: {exc.msg}",
+                "syntax_line": exc.lineno,
+            }
+        return {"syntax_ok": True}
+    return {}
 
 
 def _text_argument(arguments: PathArguments, key: str) -> str:
@@ -59,6 +87,7 @@ def write_file(
     return {
         "path": relative_to(workspace, target),
         "bytes": len(text.encode("utf-8")),
+        **_syntax_diagnostic(target, text),
     }
 
 
@@ -117,7 +146,11 @@ FILE_READ = ToolDefinition(
 
 FILE_WRITE = ToolDefinition(
     name="file_write",
-    description="Create or overwrite a UTF-8 text file inside your workspace.",
+    description=(
+        "Create or overwrite a UTF-8 text file inside your workspace. "
+        "Python and JSON files are syntax-checked after saving; a syntax warning "
+        "is returned without blocking the write."
+    ),
     parameters={
         "type": "object",
         "properties": {

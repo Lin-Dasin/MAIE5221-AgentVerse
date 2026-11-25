@@ -141,7 +141,8 @@ class _NewsroomModel:
             self.contract_errors.append((role, "original task missing"))
         if not any(HUMAN_NOTE in message.content for message in messages):
             self.contract_errors.append((role, "original instructor message missing"))
-        if "Rework attempt: 1/1" in prompt and role not in self.repair_roles:
+        is_repair = "Rework attempt: 1/" in prompt or "Rework attempt: 2/" in prompt
+        if is_repair and role not in self.repair_roles:
             self.repair_roles.append(role)
         allowed = set(ROLES[role]) | ({"file_read"} if role == "reporter" else set())
         if offered - allowed:
@@ -199,7 +200,7 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
         scenario_id="scenario-2-newsroom",
         number=1,
         max_task_tokens=180000,
-        max_rework_rounds=1,
+        max_rework_rounds=2,
     )
 
     assert await scenario.run_task(session, 1, profiles, engine) is None
@@ -216,12 +217,16 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
     (attempt,) = (task_dir / "attempts").iterdir()
     summary = json.loads((attempt / "discussion-summary.json").read_text(encoding="utf-8"))
     assert summary["mode"] == "managed"
-    first, repair = summary["attempts"]
+    first, repair_reporter, repair_editor = summary["attempts"]
     assert [(row["owner"], row["status"]) for row in first["assessments"]] == [
         ("reporter", "failed"),
         ("editor", "failed"),
     ]
-    assert (first["turns"], repair["turns"]) == (4, 2)
+    assert (
+        first["turns"],
+        repair_reporter["turns"],
+        repair_editor["turns"],
+    ) == (4, 1, 1)
     assert not (task_dir / "accepted").exists()
     with pytest.raises(ValueError, match="accept Task 1"):
         await scenario.run_task(session, 2, profiles, engine)
@@ -257,7 +262,7 @@ async def test_managed_newsroom_rechecks_report_against_repaired_source(
     else:
         assert summary["status"] == "partial"
         assert summary["stop_reason"] == "rework_limit"
-        assert not summary["candidates"]
+        assert set(summary["candidates"]) == set(outputs)
         with pytest.raises(ValueError):
             scenario.accept_attempt(session, 1, attempt.name, outputs)
 
@@ -343,7 +348,8 @@ async def test_managed_fact_check_repairs_evidence_before_editor_and_waits_for_a
             role, response = replies.popleft()
             prompt = messages[0].content
             assert f"You are {role}." in prompt
-            if "Rework attempt: 1/1" in prompt and role not in repaired:
+            is_repair = "Rework attempt: 1/" in prompt or "Rework attempt: 2/" in prompt
+            if is_repair and role not in repaired:
                 repaired.append(role)
             if (
                 role == "editor"
@@ -359,7 +365,7 @@ async def test_managed_fact_check_repairs_evidence_before_editor_and_waits_for_a
         scenario_id="scenario-2-newsroom",
         number=2,
         max_task_tokens=180_000,
-        max_rework_rounds=1,
+        max_rework_rounds=2,
     )
     assert await scenario.run_task(session, 2, profiles, engine) is None
     assert not replies and repaired == ["fact_checker", "editor"]

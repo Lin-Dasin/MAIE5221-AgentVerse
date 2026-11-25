@@ -62,6 +62,21 @@ def test_empty_search_results_do_not_verify_self_reported_sources(tmp_path):
     assert defects
 
 
+def test_schema_error_does_not_hide_the_missing_search_defect(tmp_path):
+    _write(
+        tmp_path,
+        RESEARCH_ARTIFACT,
+        json.dumps({"claims": CLAIMS, "_status": "draft", "notes": "internal"}),
+    )
+
+    claims, defects = check_research(tmp_path, {}, TODAY)
+
+    assert claims == []
+    joined = " ".join(defects)
+    assert "No usable web_search results" in joined
+    assert "Extra inputs are not permitted" in joined
+
+
 @pytest.mark.parametrize(
     "observed",
     [

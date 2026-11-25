@@ -4,6 +4,7 @@ Model/review fixtures are deterministic controls, not live quality measurements.
 """
 
 import asyncio
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -40,7 +41,8 @@ def requirement(owner="writer", **changes):
 
 
 def setup(
-    tmp_path, *, requirements=None, reviewer=None, verifier=None, tools=True, **engine_options
+    tmp_path, *, requirements=None, reviewer=None, verifier=None, tools=True,
+    snapshot_root=None, max_rework_rounds=2, **engine_options
 ):
     executor = SandboxToolExecutor(
         tmp_path,
@@ -63,9 +65,14 @@ def setup(
         reviewer=reviewer,
         prompt_token_counter=counter,
         check_timeout_sec=0.2,
+        snapshot_root=snapshot_root,
     )
     args = {
-        "plan": DeliveryPlan(goal=config.goal, requirements=requirements),
+        "plan": DeliveryPlan(
+            goal=config.goal,
+            requirements=requirements,
+            max_rework_rounds=max_rework_rounds,
+        ),
         "workspaces": {owner: executor.workspace(owner) for owner in owners},
         "profiles": {owner: profile(owner, ["file_write"] if tools else []) for owner in owners},
         "history": [],
@@ -117,6 +124,35 @@ async def test_missing_claimed_file_cannot_pass_and_retry_limit_is_respected(tmp
     assert len(result.attempts) == 3 and len(model.requests) == 3
     assert "missing_artifact" in result.assessments[0].defects[0]
     assert not result.assessments[0].artifacts
+
+
+async def test_rework_limit_restores_the_best_snapshot_and_keeps_partial_files(tmp_path):
+    runner, config, args = setup(
+        tmp_path,
+        requirements=[requirement(), requirement("reviewer")],
+        snapshot_root=tmp_path / "snapshots",
+        max_rework_rounds=1,
+    )
+    model = ScriptedModel(
+        write("READY"),
+        reply(),
+        reply("reviewer did not write a file"),
+        reply("reviewer still has no file"),
+        write("BROKEN"),
+        reply(),
+    )
+
+    result = await runner.run(config, **args, model=model)
+
+    assert result.status == "partial" and result.stop_reason == "rework_limit"
+    assert [item.status for item in result.assessments] == ["passed", "failed"]
+    assert (tmp_path / "workspaces/writer/outputs/final.md").read_text(encoding="utf-8") == "READY"
+    assert not (tmp_path / "workspaces/reviewer/outputs/final.md").exists()
+    assert (tmp_path / "snapshots/attempt-0").is_dir()
+    snapshot = json.loads(
+        (tmp_path / "snapshots/attempt-0/snapshot.json").read_text(encoding="utf-8")
+    )
+    assert snapshot["attempt"] == 0 and snapshot["score"] == 1
 
 
 async def test_every_requirement_is_rechecked_when_a_repair_breaks_an_earlier_pass(tmp_path):
