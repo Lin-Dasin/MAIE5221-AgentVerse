@@ -398,7 +398,7 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
         "--max-task-tokens",
         type=int,
         default=None,
-        help="Default: 120000 in managed mode, 60000 in open mode",
+        help="Default: 180000 in managed mode, 60000 in open mode",
     )
     run.add_argument("--max-output-tokens", type=int, default=2048)
     run.add_argument(
@@ -451,7 +451,7 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
                 rounds = 1 if args.managed else 4
             max_task_tokens = args.max_task_tokens
             if max_task_tokens is None:
-                max_task_tokens = 120_000 if args.managed else 60_000
+                max_task_tokens = 180_000 if args.managed else 60_000
             limits = dict(
                 max_rounds=rounds,
                 max_task_tokens=max_task_tokens,

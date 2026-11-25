@@ -357,14 +357,14 @@ class _GenericFileVerifier(FileVerifier):
                     "research_required: run a targeted web_search and cite at least one "
                     "returned result before delivering"
                 )
-        checks_total = base.checks_total + int(self._research_required)
+        checks_total = base.checks_total
         checks_passed = max(0, base.checks_passed - extra)
-        if self._research_required and research_ok:
-            checks_passed += 1
+        if not research_ok:
+            checks_passed = min(checks_passed, max(0, checks_total - 1))
         return CriticResult(
             passed=not defects,
             checks_total=checks_total,
-            checks_passed=min(checks_passed, checks_total),
+            checks_passed=checks_passed,
             defects=defects,
         )
 

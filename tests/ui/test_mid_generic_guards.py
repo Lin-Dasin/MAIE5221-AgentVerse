@@ -48,4 +48,4 @@ async def test_research_gate_fails_until_a_search_returns_a_result(tmp_path):
 
     tracker.results = 1
     passed = await verifier.check(rules, tmp_path)
-    assert passed.passed and passed.checks_total == 2
+    assert passed.passed and passed.checks_total == 1

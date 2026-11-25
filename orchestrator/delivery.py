@@ -226,7 +226,9 @@ class DeliveryDiscussionRunner:
                 speakers = config.speakers
                 allowance = budget.remaining
                 if plan.max_rework_rounds:
-                    allowance = max(1, allowance * 3 // 5)
+                    # Leave a repair reserve, but keep the first build large enough
+                    # for a real code/HTML deliverable rather than a planning-only turn.
+                    allowance = max(1, allowance * 4 // 5)
             else:
                 failed_owners = {item.owner for item in assessments if item.status == "failed"}
                 by_id = {item.requirement_id: item for item in assessments}
@@ -281,6 +283,10 @@ class DeliveryDiscussionRunner:
                     "Write the exact artifact paths; a claimed filename is not a delivered file. "
                     "Inspect existing files before rewriting. Keep already passing behavior. "
                     "Only actual acceptance decides completion. "
+                    "Only the named owner may write or overwrite a requirement's declared "
+                    "artifact paths. Other speakers may save supporting drafts under their own "
+                    "outputs and hand off those paths; do not create or overwrite the owner's "
+                    "final files. The owner must persist the final files. "
                     "The team-wide map below names final owners, not shared workspace paths. "
                     "Support the named owner with actual candidate files and a precise handoff. "
                     f"\nTeam delivery map: {json.dumps(delivery_map, ensure_ascii=False)}"
