@@ -11,19 +11,19 @@ ROLES = {
     "coordinator": ["file_read", "file_write"],
     "writer": ["file_read", "file_write"],
 }
-TASK_ONE = "Research the topic and save the brief to outputs/research-brief.md."
+TASK_ONE = "Write a brief to outputs/topic-brief.md."
 TASK_TWO = "Analyze the brief with outputs/analyze.py and save outputs/findings.md."
 REQUIRED = {
-    1: ("outputs/research-brief.md",),
+    1: ("outputs/topic-brief.md",),
     2: ("outputs/analyze.py", "outputs/findings.md"),
 }
 CANDIDATES = {
-    1: ("outputs/writer/research-brief.md",),
+    1: ("outputs/writer/topic-brief.md",),
     2: ("outputs/writer/analyze.py", "outputs/writer/findings.md"),
 }
 CONTENT = {
     "outputs/notes.md": "Coordinate the work and hand it to the writer.\n",
-    "outputs/research-brief.md": "Five verified facts about the topic.\n",
+    "outputs/topic-brief.md": "Five verified facts about the topic.\n",
     "outputs/analyze.py": "values = [1, 2, 3]\nprint(sum(values))\n",
     "outputs/findings.md": "The values sum to six.\n",
 }
@@ -89,7 +89,7 @@ async def test_generic_managed_scenario_accepts_both_tasks_and_records_metrics(t
     summary = json.loads((attempt / "discussion-summary.json").read_bytes())
     assert summary["mode"] == "managed" and summary["kind"] == "generic"
     assert summary["status"] == "passed" and summary["stop_reason"] == "accepted"
-    assert summary["generic_checks"]["research_required"] is True
+    assert summary["generic_checks"]["research_required"] is False
     assert set(summary["candidates"]) == set(CANDIDATES[1])
     assert summary["memory"]["written"].keys() == ROLES.keys()
     assert not (task_one / "accepted").exists()

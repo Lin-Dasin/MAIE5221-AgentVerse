@@ -54,7 +54,23 @@ def status_footer(turn: DiscussionTurn) -> str:
     return "[Unverified: no execution check was recorded.]"
 
 
-def report_prompt(turn: DiscussionTurn, artifacts: Sequence[str]) -> list[ChatMessage]:
+def _clip(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def report_prompt(
+    turn: DiscussionTurn,
+    artifacts: Sequence[str],
+    *,
+    goal: str = "",
+    last_activity: str = "",
+) -> list[ChatMessage]:
+    context = []
+    if goal.strip():
+        context.append(f"Task goal (excerpt): {_clip(goal, 300)}")
+    if last_activity.strip():
+        context.append(f"Last substantive activity (excerpt): {_clip(last_activity, 500)}")
     return [
         ChatMessage(
             role="system",
@@ -65,17 +81,22 @@ def report_prompt(turn: DiscussionTurn, artifacts: Sequence[str]) -> list[ChatMe
                 "the key interfaces, conclusions or gaps downstream must know; Next request: name "
                 "who should act next and on what; Honest status: one sentence strictly based "
                 "on the recorded operations, never claiming tests or checks that were not "
-                "recorded. If an "
-                "ambiguity, irreversible action or risky assumption needs the human, add one line "
-                f"starting with {HITL_MARKER}: state a reversible assumption and one focused "
-                "question. Otherwise omit it. No tools, no tool markup, no deliverable paste and "
-                "no acceptance verdict."
+                "recorded. Add one line starting with "
+                f"{HITL_MARKER} ONLY when a blocking requirement ambiguity or an irreversible "
+                "high-risk decision needs the human. Routine handoffs, path/format confirmation "
+                "and reversible assumptions must not use [HITL]; proceed under the stated "
+                "assumption and still deliver the declared artifact. No tools, no tool markup, "
+                "no deliverable paste and no acceptance verdict."
             ),
         ),
         ChatMessage(
             role="user",
-            content=f"Member: {turn.speaker}\nExpected paths (not proof of delivery): "
-            f"{', '.join(artifacts[:8])}\nRecorded operations:\n{progress_view([turn])}",
+            content=(
+                f"Member: {turn.speaker}\n"
+                + ("\n".join(context) + "\n" if context else "")
+                + f"Expected paths (not proof of delivery): "
+                f"{', '.join(artifacts[:8])}\nRecorded operations:\n{progress_view([turn])}"
+            ),
         ),
     ]
 

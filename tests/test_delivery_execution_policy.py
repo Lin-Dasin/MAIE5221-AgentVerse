@@ -4,6 +4,7 @@ import errno
 
 import pytest
 
+from orchestrator.delivery import _repair_allowance
 from orchestrator.discussion import RoundRobinDiscussionEngine
 from protocol.delivery import DeliveryPlan
 from protocol.models import ModelResponse, ToolCall
@@ -25,6 +26,13 @@ def file_executor(root):
             "file_write": RegisteredTool(FILE_WRITE, write_file, ("path", "text")),
         },
     )
+
+
+def test_repair_allowance_never_splits_below_a_workable_turn():
+    assert _repair_allowance(36_000, 3) == 25_000
+    assert _repair_allowance(36_000, 2) == 25_000
+    assert _repair_allowance(10_000, 3) == 10_000
+    assert _repair_allowance(36_000, 0) == 36_000
 
 
 async def managed_run(tmp_path, model, *, repair=False, max_steps=8):

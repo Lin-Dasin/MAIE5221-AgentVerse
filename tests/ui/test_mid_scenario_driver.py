@@ -109,6 +109,67 @@ async def test_same_group_two_tasks_interleave_and_export(prepared, tmp_path):
     assert (destination / "artifacts" / "task-2" / "dashboard.html").read_text() == "<p>55</p>"
 
 
+async def test_export_omits_failed_runs_and_keeps_the_accepted_attempt(prepared, tmp_path):
+    run_dir, profiles, _ = prepared
+
+    def write_summary(workspace, status, stop_reason, candidates):
+        (workspace / "discussion-summary.json").write_text(
+            json.dumps(
+                {
+                    "mode": "managed",
+                    "status": status,
+                    "stop_reason": stop_reason,
+                    "candidates": candidates,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    async def accepted_task_one(request, human, emit):
+        emit("lead", "ACCEPTED TASK ONE VOICE")
+        path = request.workspace / "outputs" / "lead" / "task1.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("task one", encoding="utf-8")
+        candidates = {"outputs/lead/task1.md": scenario.file_sha256(path)}
+        write_summary(request.workspace, "passed", "accepted", candidates)
+        return None
+
+    assert await scenario.run_task(run_dir, 1, profiles, accepted_task_one) is None
+    task_one_attempts = run_dir / "tasks" / "task-1" / "attempts"
+    (attempt_one,) = task_one_attempts.iterdir()
+    summary_one = json.loads((attempt_one / "discussion-summary.json").read_bytes())
+    scenario.accept_attempt(run_dir, 1, attempt_one.name, tuple(summary_one["candidates"]))
+
+    async def failed_task_two(request, human, emit):
+        emit("lead", "FAILED TASK TWO NOISE")
+        write_summary(request.workspace, "failed", "rework_limit", {})
+        return None
+
+    assert await scenario.run_task(run_dir, 2, profiles, failed_task_two) is None
+
+    async def accepted_task_two(request, human, emit):
+        emit("lead", "ACCEPTED TASK TWO VOICE")
+        path = request.workspace / "outputs" / "lead" / "task2.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("task two", encoding="utf-8")
+        candidates = {"outputs/lead/task2.md": scenario.file_sha256(path)}
+        write_summary(request.workspace, "passed", "accepted", candidates)
+        return None
+
+    assert await scenario.run_task(run_dir, 2, profiles, accepted_task_two) is None
+    task_two_attempts = run_dir / "tasks" / "task-2" / "attempts"
+    attempt_two = max(task_two_attempts.iterdir(), key=lambda path: path.stat().st_mtime)
+    summary_two = json.loads((attempt_two / "discussion-summary.json").read_bytes())
+    scenario.accept_attempt(run_dir, 2, attempt_two.name, tuple(summary_two["candidates"]))
+
+    destination = tmp_path / "filtered-submission"
+    assert scenario.export_session(run_dir, destination).is_dir()
+    transcript = (destination / "transcript.md").read_text(encoding="utf-8")
+    assert "ACCEPTED TASK ONE VOICE" in transcript
+    assert "ACCEPTED TASK TWO VOICE" in transcript
+    assert "FAILED TASK TWO NOISE" not in transcript
+
+
 async def test_task_order_and_retry_with_no_partial_publication(prepared):
     run_dir, profiles, session = prepared
     bus = MessageBus(run_dir / "messages.sqlite3")

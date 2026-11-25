@@ -28,6 +28,17 @@ class _PlanReviewRequired(RuntimeError):
     pass
 
 
+# A repair attempt must still afford a prompt, a report and a bounded write.
+MIN_REPAIR_ALLOWANCE = 25_000
+
+
+def _repair_allowance(remaining: int, rounds_left: int) -> int:
+    if rounds_left <= 0:
+        return remaining
+    fair_share = max(1, remaining // rounds_left)
+    return min(remaining, max(fair_share, MIN_REPAIR_ALLOWANCE))
+
+
 def _snapshot_artifacts(plan, roots: Mapping[str, Path], destination: Path) -> None:
     """Copy declared candidates aside so a worse repair cannot erase them."""
     for requirement in plan.requirements:
@@ -234,8 +245,11 @@ class DeliveryDiscussionRunner:
                     speakers = [first_failed.owner]
                 else:
                     speakers = [owner for owner in config.speakers if owner in failed_owners]
-                # Split the still-unused allowance among the remaining repair rounds.
-                allowance = max(1, budget.remaining // (plan.max_rework_rounds - attempt + 1))
+                # Split the still-unused allowance among the remaining repair rounds,
+                # but keep enough room for a real inspect -> write -> report turn.
+                allowance = _repair_allowance(
+                    budget.remaining, plan.max_rework_rounds - attempt + 1
+                )
             cycle = config.model_copy(
                 update={
                     "speakers": speakers,

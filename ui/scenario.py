@@ -119,6 +119,46 @@ def file_sha256(path: Path) -> str:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def _record_run_messages(workspace: Path, start: int, end: int) -> None:
+    payload = {"start": start, "end": end}
+    (workspace / "run-messages.json").write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+    )
+    summary_path = workspace / "discussion-summary.json"
+    if not summary_path.is_file():
+        return
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        data["run_messages"] = payload
+        summary_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+
+def _accepted_ranges(session_dir: Path, session: ScenarioSession) -> list[tuple[int, int]]:
+    ranges = []
+    for task in session.scenario.tasks:
+        task_dir = session_dir / "tasks" / task.task_id
+        meta_path = task_dir / "accepted.json"
+        if not meta_path.is_file():
+            continue
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        attempt = meta.get("attempt") if isinstance(meta, dict) else None
+        if not isinstance(attempt, str):
+            continue
+        summary_path = inside(task_dir / "attempts", attempt) / "discussion-summary.json"
+        if not summary_path.is_file():
+            continue
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        window = summary.get("run_messages") if isinstance(summary, dict) else None
+        if not isinstance(window, dict):
+            continue
+        start, end = window.get("start"), window.get("end")
+        if type(start) is int and type(end) is int and 0 <= start <= end:
+            ranges.append((start, end))
+    return ranges
+
+
 def _publish_accepted(
     workspace: Path,
     outputs: tuple[str, ...],
@@ -213,6 +253,8 @@ async def run_task(
         (workspace / "inputs").mkdir(parents=True)
         (workspace / "outputs").mkdir()
         inputs = _copy_accepted(previous, workspace / "inputs") if number == 2 else ()
+        before = bus.history(session.conversation_id, INSTRUCTOR)
+        start_sequence = before[-1].sequence + 1 if before else 1
         history = _post_task(bus, session, task, inputs)
         cursor = history[-1].sequence
 
@@ -234,6 +276,8 @@ async def run_task(
         )
         started_at = time.monotonic()
         outputs = await engine(request, human, emit)
+        end_sequence = bus.history(session.conversation_id, INSTRUCTOR)[-1].sequence
+        _record_run_messages(workspace, start_sequence, end_sequence)
         record_task_metrics(session_dir, task.task_id, time.monotonic() - started_at)
         if outputs is None:
             return None
@@ -288,6 +332,22 @@ def accept_attempt(
                     f"Artifact is not a listed candidate from a scenario agent: {output}"
                 )
         _publish_accepted(workspace, artifacts, accepted, expected_hashes=candidates)
+        meta_path = task_dir / "accepted.json"
+        if meta_path.exists():
+            _require_unlinked(meta_path)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "attempt": attempt,
+                    "task_id": task.task_id,
+                    "artifacts": list(artifacts),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         record_task_metrics(session_dir, task.task_id)
     return accepted
 
@@ -300,12 +360,22 @@ def export_session(session_dir: Path, destination: Path) -> Path:
     }
     if not all(path.is_dir() for path in accepted.values()):
         raise ValueError("Accept both tasks before exporting the scoring bundle")
+    history = bus.history(session.conversation_id, INSTRUCTOR)
+    ranges = _accepted_ranges(session_dir, session)
+    if ranges:
+        history = [
+            event
+            for event in history
+            if event.sender == INSTRUCTOR
+            or event.kind == "handoff"
+            or any(start <= event.sequence <= end for start, end in ranges)
+        ]
     return export_scenario(
         destination,
         scenario_id=session.scenario.scenario_id,
         conversation_id=session.conversation_id,
         roles={role.agent_id: role.role_label for role in session.scenario.roles},
-        messages=bus.history(session.conversation_id, INSTRUCTOR),
+        messages=history,
         accepted_artifacts=accepted,
     )
 
@@ -324,7 +394,12 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
     run.add_argument("number", type=int, choices=(1, 2))
     run.add_argument("--profiles-dir", required=True, type=Path)
     run.add_argument("--max-rounds", type=int, help="Default: 4 in open mode, 1 in managed mode")
-    run.add_argument("--max-task-tokens", type=int, default=60000)
+    run.add_argument(
+        "--max-task-tokens",
+        type=int,
+        default=None,
+        help="Default: 120000 in managed mode, 60000 in open mode",
+    )
     run.add_argument("--max-output-tokens", type=int, default=2048)
     run.add_argument(
         "--managed", action="store_true", help="Run automated checks and owner-directed rework"
@@ -374,9 +449,12 @@ def main(argv: list[str] | None = None, *, engine: TaskEngine | None = None) -> 
             rounds = args.max_rounds
             if rounds is None:
                 rounds = 1 if args.managed else 4
+            max_task_tokens = args.max_task_tokens
+            if max_task_tokens is None:
+                max_task_tokens = 120_000 if args.managed else 60_000
             limits = dict(
                 max_rounds=rounds,
-                max_task_tokens=args.max_task_tokens,
+                max_task_tokens=max_task_tokens,
                 max_output_tokens=args.max_output_tokens,
             )
             if args.managed:

@@ -34,7 +34,7 @@ from runtime.discussion_delivery_policy import (
     output_path,
 )
 from runtime.discussion_handoff import contains_tool_markup, fallback, report, report_prompt
-from runtime.discussion_workflow import phase_instruction
+from runtime.discussion_workflow import phase_instruction, progress_view
 
 MAX_TOOL_CALLS_PER_STEP = 16
 
@@ -153,12 +153,26 @@ async def speak(
             return fallback(snapshot("Contribution quota exhausted."), "contribution_budget")
         raise SpeakerStopped("token_budget")
 
+    def last_activity() -> str:
+        for exchange in reversed(exchanges):
+            for message in reversed(exchange):
+                if message.role == "assistant" and message.content.strip():
+                    return excerpt(message.content.strip(), 500)
+        if calls:
+            return excerpt(progress_view([snapshot("Pending")]), 500)
+        return ""
+
     async def close() -> DiscussionTurn:
         turn = snapshot("No model report available.")
         try:
             return await report(
                 turn,
-                messages=report_prompt(turn, required_artifacts),
+                messages=report_prompt(
+                    turn,
+                    required_artifacts,
+                    goal=config.goal,
+                    last_activity=last_activity(),
+                ),
                 model=model,
                 token_counter=token_counter,
                 token_limit=remaining_tokens,
@@ -228,7 +242,12 @@ async def speak(
         prompt_tokens = count_tokens(token_counter, messages, active_tools)
         output_cap = config.max_output_tokens
         if managed:
-            closing_messages = report_prompt(snapshot("Pending"), required_artifacts)
+            closing_messages = report_prompt(
+                snapshot("Pending"),
+                required_artifacts,
+                goal=config.goal,
+                last_activity=last_activity(),
+            )
             closing_reserve = (
                 count_tokens(token_counter, closing_messages, []) + report_cap + 1000
             )

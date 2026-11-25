@@ -98,7 +98,7 @@ def test_run_command_forwards_managed_limits(tmp_path, monkeypatch):
         "max_rounds": 1,
         "max_rework_rounds": 0,
         "max_output_tokens": 1024,
-        "max_task_tokens": 60_000,
+        "max_task_tokens": 120_000,
         "hitl_pause_timeout_sec": 0.0,
         "generic_verifier": False,
     }

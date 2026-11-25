@@ -30,6 +30,10 @@ def _tokens(text: str) -> set[str]:
     return tokens
 
 
+def _lesson_key(lessons: list[str]) -> tuple[str, ...]:
+    return tuple(sorted({lesson.strip() for lesson in lessons if lesson.strip()}))
+
+
 @dataclass(frozen=True)
 class MemoryEntry:
     entry_id: str
@@ -93,8 +97,18 @@ class ScenarioMemory:
             return len(query & _tokens(" ".join(entry.lessons + entry.tags)))
 
         ranked = sorted(entries, key=lambda entry: (score(entry), entry.timestamp), reverse=True)
-        relevant = [entry for entry in ranked if score(entry) > 0][:limit]
-        return relevant or ranked[:limit]
+        relevant = [entry for entry in ranked if score(entry) > 0]
+        chosen: list[MemoryEntry] = []
+        seen: set[tuple[str, ...]] = set()
+        for entry in [*relevant, *ranked]:
+            key = _lesson_key(entry.lessons)
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen.append(entry)
+            if len(chosen) >= limit:
+                break
+        return chosen
 
     def write(
         self,
@@ -115,9 +129,24 @@ class ScenarioMemory:
         if not normalized:
             normalized = ["Read the exact required artifact and handoff paths before writing."]
             tags.add("handoff")
+        key = _lesson_key(normalized[:3])
+        timestamp = datetime.now(UTC).isoformat()
+        for index, existing in enumerate(entries):
+            if _lesson_key(existing.lessons) == key:
+                updated = MemoryEntry(
+                    entry_id=existing.entry_id,
+                    timestamp=timestamp,
+                    task_id=task_id,
+                    outcome=outcome,
+                    lessons=normalized[:3],
+                    tags=sorted(tags | set(existing.tags)),
+                )
+                entries[index] = updated
+                self._save(agent_id, entries)
+                return updated
         entry = MemoryEntry(
             entry_id=uuid4().hex,
-            timestamp=datetime.now(UTC).isoformat(),
+            timestamp=timestamp,
             task_id=task_id,
             outcome=outcome,
             lessons=normalized[:3],

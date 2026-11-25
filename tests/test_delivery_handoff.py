@@ -181,10 +181,17 @@ async def test_report_prompt_requests_structured_handoff_and_appends_unverified_
             ToolResult(ok=True, data={"path": "outputs/app.py"}),
         )
     )
-    prompt = report_prompt(turn, ["outputs/app.py"])
+    prompt = report_prompt(
+        turn,
+        ["outputs/app.py"],
+        goal="Build an application with a tested entry point.",
+        last_activity="I saved the current implementation and checked its syntax.",
+    )
     text = "\n".join(message.content for message in prompt)
     for label in ("Decision", "Artifact & interface", "Next request", "Honest status"):
         assert label in text
+    assert "Task goal" in text and "Last substantive activity" in text
+    assert "blocking requirement ambiguity" in text
     assert HITL_MARKER in text
 
     output = await report(

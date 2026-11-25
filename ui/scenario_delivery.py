@@ -64,6 +64,66 @@ _ARTIFACT_PATTERN = re.compile(
 _RESEARCH_HINT = re.compile(
     r"\bresearch\b|\bsearch\b|\binvestigate\b|调研|检索", re.IGNORECASE
 )
+_COORDINATION_ROLE_HINTS = (
+    "lead",
+    "coordinator",
+    "manager",
+    "moderator",
+    "reviewer",
+    "auditor",
+    "risk",
+    "qa",
+    "fact_checker",
+    "chief",
+)
+_PRODUCER_ROLE_HINTS = (
+    "writer",
+    "author",
+    "dev",
+    "developer",
+    "engineer",
+    "analyst",
+    "reporter",
+    "editor",
+    "builder",
+    "specialist",
+)
+
+
+def _role_matches(role: str, hints: tuple[str, ...]) -> bool:
+    name = role.casefold()
+    return any(hint in name for hint in hints)
+
+
+def _preferred_owner(candidates: list[str]) -> str:
+    for hint in _PRODUCER_ROLE_HINTS:
+        matches = [candidate for candidate in candidates if hint in candidate.casefold()]
+        if matches:
+            return matches[-1]
+    return candidates[-1]
+
+
+def _generic_owner(
+    speakers: list[str],
+    profiles: dict[str, AgentProfile],
+    artifacts: list[str],
+) -> str:
+    writers = [speaker for speaker in speakers if "file_write" in profiles[speaker].tools]
+    if not writers:
+        raise ValueError("Generic managed tasks require a speaker with file_write")
+    if any(Path(path).suffix.lower() == ".py" for path in artifacts):
+        coders = [speaker for speaker in writers if "code_exec" in profiles[speaker].tools]
+        if coders:
+            producers = [
+                speaker
+                for speaker in coders
+                if not _role_matches(speaker, _COORDINATION_ROLE_HINTS)
+            ]
+            return _preferred_owner(producers or coders)
+    producers = [
+        speaker for speaker in writers if not _role_matches(speaker, _COORDINATION_ROLE_HINTS)
+    ]
+    return _preferred_owner(producers or writers)
 
 _LESSON_RULES = (
     (
@@ -199,12 +259,7 @@ def _generic_requirements(
     from protocol.delivery import DeliveryRequirement
 
     artifacts = _declared_artifacts(request.task.text) or [f"outputs/task-{number}.md"]
-    owner = next(
-        (speaker for speaker in reversed(speakers) if "file_write" in profiles[speaker].tools),
-        None,
-    )
-    if owner is None:
-        raise ValueError("Generic managed tasks require a speaker with file_write")
+    owner = _generic_owner(speakers, profiles, artifacts)
     return [
         DeliveryRequirement(
             requirement_id=f"task-{number}",
@@ -217,8 +272,45 @@ def _generic_requirements(
     ]
 
 
+class _SearchTracker:
+    """Count effective web_search outcomes without changing the tool contract."""
+
+    def __init__(self, base: ToolExecutor) -> None:
+        self.base = base
+        self.calls = 0
+        self.results = 0
+
+    def tool_definitions(self):
+        return self.base.tool_definitions()
+
+    def workspace(self, agent_id: str) -> Path:
+        return self.base.workspace(agent_id)
+
+    async def execute(self, call, context):
+        result = await self.base.execute(call, context)
+        if call.name == "web_search" and result.ok:
+            self.calls += 1
+            data = result.data
+            if (
+                isinstance(data, dict)
+                and data.get("provider") == "tavily"
+                and isinstance(data.get("results"), list)
+                and any(
+                    isinstance(row, dict) and isinstance(row.get("url"), str)
+                    for row in data["results"]
+                )
+            ):
+                self.results += 1
+        return result
+
+
 class _GenericFileVerifier(FileVerifier):
     """File presence plus non-empty and .py/.json syntax checks; no Mid rules."""
+
+    def __init__(self, *, research_required: bool = False, search_tracker=None):
+        super().__init__()
+        self._research_required = research_required
+        self._search_tracker = search_tracker
 
     async def check(self, rules, root):
         base = await super().check(rules, root)
@@ -257,10 +349,22 @@ class _GenericFileVerifier(FileVerifier):
                         f"syntax_error: {rule.path} line {exc.lineno}: {exc.msg}"
                     )
                     extra += 1
+        research_ok = True
+        if self._research_required:
+            research_ok = bool(self._search_tracker and self._search_tracker.results)
+            if not research_ok:
+                defects.append(
+                    "research_required: run a targeted web_search and cite at least one "
+                    "returned result before delivering"
+                )
+        checks_total = base.checks_total + int(self._research_required)
+        checks_passed = max(0, base.checks_passed - extra)
+        if self._research_required and research_ok:
+            checks_passed += 1
         return CriticResult(
             passed=not defects,
-            checks_total=base.checks_total,
-            checks_passed=max(0, base.checks_passed - extra),
+            checks_total=checks_total,
+            checks_passed=min(checks_passed, checks_total),
             defects=defects,
         )
 
@@ -812,11 +916,13 @@ def _generic_managed_engine(
             max_output_tokens=max_output_tokens,
         )
         profiles = dict(request.profiles)
+        research_required = bool(_RESEARCH_HINT.search(request.task.text))
+        tracker = _SearchTracker(executor)
         requirements = _generic_requirements(
             request, config.speakers, profiles, number
         )
         workspaces = {
-            speaker: executor.workspace(speaker).resolve() for speaker in config.speakers
+            speaker: tracker.workspace(speaker).resolve() for speaker in config.speakers
         }
         history = _history(request)
         plan = DeliveryPlan(
@@ -828,20 +934,22 @@ def _generic_managed_engine(
             max_rework_rounds=max_rework_rounds,
         )
         engine = RoundRobinDiscussionEngine(
-            _file_tools(executor, request.inputs),
+            _file_tools(tracker, request.inputs),
             hitl_pause_timeout_sec=hitl_pause_timeout_sec,
             require_all_artifacts=True,
         )
         runner = DeliveryDiscussionRunner(
             engine,
-            _GenericFileVerifier(),
+            _GenericFileVerifier(
+                research_required=research_required, search_tracker=tracker
+            ),
             reviewer=None,
             check_timeout_sec=30,
             snapshot_root=request.workspace / "snapshots",
         )
 
         async def publish(turn: "DiscussionTurn") -> None:
-            _share_outputs(request, executor, turn.speaker)
+            _share_outputs(request, tracker, turn.speaker)
             emit(turn.speaker, turn.content)
 
         session_dir = _session_dir(request.workspace)
@@ -856,7 +964,7 @@ def _generic_managed_engine(
             profiles=profiles,
             history=history,
             model=model,
-            executor=executor,
+            executor=tracker,
             human=_HumanInput(human),
             emit=publish,
         )
@@ -875,28 +983,12 @@ def _generic_managed_engine(
             memory.log_event(
                 "memory_write", agent_id, request.task.task_id, [entry.entry_id]
             )
-        search_calls = 0
-        search_with_results = 0
+        search_calls = tracker.calls
+        search_with_results = tracker.results
         hitl_triggers = 0
         for attempt in result.attempts:
             for turn in attempt.turns:
                 hitl_triggers += int("[HITL]" in turn.content)
-                for call, outcome in zip(turn.tool_calls, turn.tool_results, strict=True):
-                    if call.name != "web_search" or not outcome.ok:
-                        continue
-                    search_calls += 1
-                    data = outcome.data
-                    if (
-                        isinstance(data, dict)
-                        and data.get("provider") == "tavily"
-                        and isinstance(data.get("results"), list)
-                        and any(
-                            isinstance(row, dict) and isinstance(row.get("url"), str)
-                            for row in data["results"]
-                        )
-                    ):
-                        search_with_results += 1
-        research_required = bool(_RESEARCH_HINT.search(request.task.text))
         candidates = _stage_verified(request, workspaces, result)
         summary = {
             "mode": "managed",

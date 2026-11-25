@@ -48,6 +48,35 @@ def test_role_memory_files_are_isolated_and_events_are_logged(tmp_path):
     assert {event["agent_id"] for event in events} == {"alpha", "beta"}
 
 
+def test_identical_lessons_update_in_place_and_recall_is_unique(tmp_path):
+    memory = ScenarioMemory(tmp_path)
+    lessons = [
+        ("Run code_exec before finalizing.", ("code",)),
+        ("Read the target first.", ("handoff",)),
+    ]
+    first = memory.write("writer", task_id="task-1", outcome="failed", lessons=lessons)
+    second = memory.write(
+        "writer", task_id="task-2", outcome="passed", lessons=list(reversed(lessons))
+    )
+    third = memory.write("writer", task_id="task-2", outcome="passed", lessons=lessons)
+
+    assert first.entry_id == second.entry_id == third.entry_id
+    entries = json.loads(memory.path_for("writer").read_text(encoding="utf-8"))["entries"]
+    assert len(entries) == 1
+    assert entries[0]["outcome"] == "passed"
+
+    memory.write(
+        "writer",
+        task_id="task-2",
+        outcome="passed",
+        lessons=[("Validate aggregation with sample data.", ("aggregation",))],
+    )
+    recalled = memory.recall("writer", "code aggregation", limit=3)
+    texts = [" | ".join(entry.lessons) for entry in recalled]
+    assert len(texts) == len(set(texts))
+    assert any("Run code_exec" in text for text in texts)
+
+
 def test_task_two_recalls_only_the_agents_own_lessons(tmp_path):
     memory = ScenarioMemory(tmp_path)
     memory.write(
